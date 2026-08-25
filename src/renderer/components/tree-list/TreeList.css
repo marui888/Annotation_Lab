@@ -1,0 +1,64 @@
+.tree-list,
+.tree-list-children {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree-list-children {
+  margin-top: 6px;
+}
+
+.tree-list-item {
+  min-width: 0;
+}
+
+.tree-list-node {
+  position: relative;
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  padding-left: calc(var(--tree-depth, 0) * 18px);
+}
+
+.tree-list-node::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--tree-depth, 0) * 18px);
+  right: 0;
+  height: 2px;
+  background: transparent;
+}
+
+.tree-list-node.drop-before::before {
+  top: -4px;
+  background: #ffd45a;
+}
+
+.tree-list-node.drop-after::before {
+  bottom: -4px;
+  background: #ffd45a;
+}
+
+.tree-list-node.drop-inside {
+  outline: 1px solid #ffd45a;
+  outline-offset: 1px;
+  background: rgba(255, 212, 90, 0.06);
+}
+
+.tree-list.readonly .tree-list-node {
+  cursor: default;
+}
+
+.tree-list-empty {
+  height: calc(100% - 24px);
+  display: grid;
+  place-items: center;
+  color: #777;
+  font-size: 14px;
+  text-align: center;
+}

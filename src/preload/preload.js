@@ -1,0 +1,27 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+contextBridge.exposeInMainWorld('labApi', {
+  openImage: () => ipcRenderer.invoke('file:openImage'),
+  openVideo: () => ipcRenderer.invoke('file:openVideo'),
+  loadImageByPath: (filePath) => ipcRenderer.invoke('file:loadImageByPath', filePath),
+  openAnnotationFile: () => ipcRenderer.invoke('annotation:openFile'),
+  readAnnotationFileRaw: (annotationFilePath) => ipcRenderer.invoke('annotation:readRawByPath', annotationFilePath),
+  loadAnnotationFileByPath: (annotationFilePath) => ipcRenderer.invoke('annotation:loadFileByPath', annotationFilePath),
+  saveAnnotationFileRaw: (payload) => ipcRenderer.invoke('annotation:saveRawByPath', payload),
+  loadAnnotations: (sourceFilePath) => ipcRenderer.invoke('annotation:load', sourceFilePath),
+  saveAnnotations: (payload) => ipcRenderer.invoke('annotation:save', payload),
+  chooseCDocumentPath: (title) => ipcRenderer.invoke('cDocument:newPath', title),
+  openCDocument: () => ipcRenderer.invoke('cDocument:open'),
+  readCDocumentFile: (filePath) => ipcRenderer.invoke('cDocument:readFileByPath', filePath),
+  saveCDocument: (payload) => ipcRenderer.invoke('cDocument:save', payload),
+  existsMany: (filePaths) => ipcRenderer.invoke('file:existsMany', filePaths),
+  selectFolder: (title) => ipcRenderer.invoke('file:selectFolder', title),
+  selectFileForReference: (payload) => ipcRenderer.invoke('file:selectFileForReference', payload),
+  scanAnnotationFolder: () => ipcRenderer.invoke('index:scanFolder'),
+  scanAnnotationFiles: () => ipcRenderer.invoke('index:scanAnnotationFiles'),
+  openExternalRef: () => ipcRenderer.invoke('file:openExternalRef'),
+  readTextFile: (filePath) => ipcRenderer.invoke('file:readTextByPath', filePath),
+  openCRef: () => ipcRenderer.invoke('file:openCRef'),
+  chooseExportFolder: () => ipcRenderer.invoke('export:chooseFolder'),
+  exportAnnotationCrops: (payload) => ipcRenderer.invoke('export:annotationCrops', payload),
+})

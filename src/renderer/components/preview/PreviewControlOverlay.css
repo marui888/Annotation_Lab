@@ -1,0 +1,74 @@
+.preview-control-overlay {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 5;
+  display: grid;
+  justify-items: stretch;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid #4d4329;
+  border-radius: 4px;
+  background: rgba(20, 20, 20, 0.82);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.preview-control-row {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  color: #e8dcc0;
+  font-size: 11px;
+}
+
+.preview-control-group {
+  width: max-content;
+  display: grid;
+  align-items: center;
+  gap: 3px;
+}
+
+.preview-control-group.zoom {
+  grid-template-columns: 24px 44px 24px;
+}
+
+.preview-control-group.color {
+  grid-template-columns: 22px 28px;
+}
+
+.preview-control-group.frame {
+  grid-template-columns: auto 16px;
+}
+
+.preview-control-group button {
+  height: 22px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid #5a4a22;
+  background: #181818;
+  color: #ffd45a;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.preview-control-group button:hover {
+  border-color: #ffd45a;
+  background: #302a18;
+}
+
+.preview-control-group input[type="color"] {
+  width: 100%;
+  height: 22px;
+  padding: 1px;
+  border: 1px solid #5a4a22;
+  background: #181818;
+  cursor: pointer;
+}
+
+.preview-control-group input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #ffd45a;
+}

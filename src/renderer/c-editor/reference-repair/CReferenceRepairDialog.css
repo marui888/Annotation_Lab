@@ -1,0 +1,177 @@
+.reference-repair-dialog {
+  width: min(1040px, calc(100vw - 64px));
+  max-height: calc(100vh - 64px);
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(220px, 1fr) auto;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #5a4a22;
+  background: #1d1d1d;
+  color: #eee7d8;
+  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.55);
+}
+
+.reference-repair-dialog header,
+.reference-repair-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.reference-repair-dialog header strong {
+  display: block;
+  color: #ffd45a;
+}
+
+.reference-repair-dialog header small {
+  color: #bdb39f;
+}
+
+.repair-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.repair-summary span {
+  padding: 3px 7px;
+  border: 1px solid #3a3a3a;
+  background: #252525;
+}
+
+.repair-summary .repair-error,
+.repair-summary .repair-warning,
+.repair-missing {
+  color: #ff6b5f;
+}
+
+.repair-ok {
+  color: #9de27c;
+}
+
+.repair-prefix {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.repair-prefix label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #b8b0a0;
+  font-size: 12px;
+}
+
+.repair-prefix label span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+
+.repair-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  color: #b8b0a0;
+  font-size: 12px;
+}
+
+.repair-options label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: #eee7d8;
+}
+
+.repair-options input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #ffd45a;
+}
+
+.reference-repair-dialog input,
+.reference-repair-dialog select,
+.reference-repair-dialog button {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid #4a4a4a;
+  background: #151515;
+  color: #eee7d8;
+}
+
+.reference-repair-dialog button {
+  padding: 0 9px;
+  border-color: #5a4a22;
+  color: #ffd45a;
+  cursor: pointer;
+}
+
+.reference-repair-dialog button:hover:not(:disabled) {
+  border-color: #ffd45a;
+  background: #302a18;
+}
+
+.reference-repair-dialog button:disabled {
+  color: #777;
+  cursor: default;
+}
+
+.repair-list {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #333;
+  scrollbar-color: #454238 #171717;
+  scrollbar-width: thin;
+}
+
+.repair-list-head,
+.repair-row {
+  display: grid;
+  grid-template-columns: 80px 96px minmax(170px, 1fr) minmax(170px, 1fr) 70px 160px;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 7px;
+  border-bottom: 1px solid #303030;
+  font-size: 12px;
+}
+
+.repair-list-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #ffd45a;
+  background: #242424;
+}
+
+.repair-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repair-row-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.repair-row-actions button {
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.repair-empty {
+  padding: 16px;
+  color: #888;
+  font-size: 13px;
+}

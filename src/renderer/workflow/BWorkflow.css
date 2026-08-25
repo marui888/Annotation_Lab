@@ -1,0 +1,445 @@
+.b-workflow {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  background: #101010;
+  border-left: 1px solid #333;
+}
+
+.b-entity-list-zone {
+  position: relative;
+  min-width: 0;
+  min-height: 220px;
+  padding: 8px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #5a4a22;
+  border-left: 0;
+  background: #111;
+  scrollbar-color: #454238 #171717;
+  scrollbar-width: thin;
+}
+
+.b-entity-list-zone.drop-active {
+  border-color: #ffd45a;
+  background: #17140d;
+  box-shadow: inset 0 0 0 1px rgba(255, 212, 90, 0.45);
+}
+
+.b-view-content-scroll::-webkit-scrollbar,
+.b-workflow-preview::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.b-view-content-scroll::-webkit-scrollbar-track,
+.b-workflow-preview::-webkit-scrollbar-track {
+  background: #171717;
+}
+
+.b-view-content-scroll::-webkit-scrollbar-thumb,
+.b-workflow-preview::-webkit-scrollbar-thumb {
+  background: #454238;
+  border-radius: 5px;
+}
+
+.b-view-content-scroll::-webkit-scrollbar-thumb:hover,
+.b-workflow-preview::-webkit-scrollbar-thumb:hover {
+  background: #6c6248;
+}
+
+.b-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 7px;
+}
+
+.b-view-tabs button {
+  height: 25px;
+  font-size: 12px;
+}
+
+.b-view-tabs button.active {
+  border-color: #ffd45a;
+  background: #3a321c;
+  color: #ffd45a;
+}
+
+.b-view-content-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--b-preview-background, transparent);
+  scrollbar-color: #454238 #171717;
+  scrollbar-width: thin;
+}
+
+.b-entity-card.selected {
+  border-color: #ffd45a;
+  background: #302a18;
+  box-shadow: 0 0 0 1px rgba(255, 212, 90, 0.5), 0 4px 12px rgba(0, 0, 0, 0.34);
+}
+
+.b-entity-card {
+  width: 260px;
+  max-width: calc(100vw - 80px);
+  min-width: 180px;
+  padding: 7px;
+  border: 1px solid #5a4a22;
+  border-radius: 5px;
+  background: #242424;
+  color: #ddd4c0;
+  cursor: grab;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.34);
+}
+
+.b-entity-card:hover {
+  border-color: #ffd45a;
+  background: #2c281d;
+}
+
+.b-entity-card:active {
+  cursor: grabbing;
+}
+
+.b-entity-card-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.b-entity-card-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #ffd45a;
+  font-size: 12px;
+}
+
+.b-entity-card-title span {
+  color: #eee7d8;
+  font-size: 12px;
+}
+
+.b-entity-card small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a9a08d;
+  font-size: 11px;
+}
+
+.b-entity-card select {
+  width: 100%;
+  height: 24px;
+  margin-top: 6px;
+  border: 1px solid #4a4a4a;
+  background: #151515;
+  color: #eee7d8;
+  font-size: 11px;
+}
+
+.b-entity-card select:focus {
+  outline: 1px solid #ffd45a;
+  border-color: #ffd45a;
+}
+
+.b-workflow-empty {
+  height: calc(100% - 24px);
+  display: grid;
+  place-items: center;
+  color: #777;
+  font-size: 14px;
+  text-align: center;
+}
+
+.b-preview-list {
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--b-preview-background, #fff);
+}
+
+.b-preview-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 100%;
+  background: var(--b-preview-background, #fff);
+}
+
+.b-preview-list .tree-list-node {
+  width: fit-content;
+  max-width: none;
+}
+
+.b-preview-list .a-preview-card.shared-scale {
+  width: fit-content;
+  max-width: none;
+  height: auto;
+  padding: 0;
+  overflow: visible;
+  background: var(--a-preview-background, var(--b-preview-background, #fff));
+  transition: none;
+  animation: none;
+}
+
+.b-preview-list .a-preview-card.shared-scale .a-preview-crop {
+  width: fit-content;
+  height: fit-content;
+  min-width: 0;
+  min-height: 0;
+  display: block;
+  overflow: visible;
+  background: var(--a-preview-background, var(--b-preview-background, #fff));
+  transition: none;
+  animation: none;
+}
+
+.b-preview-list .a-preview-card.shared-scale .a-preview-image-frame {
+  display: block;
+  transition: none;
+  animation: none;
+}
+
+.b-workflow-splitter {
+  min-height: 6px;
+  cursor: row-resize;
+  background: #171717;
+  border-top: 1px solid #343020;
+  border-bottom: 1px solid #343020;
+}
+
+.b-workflow-splitter:hover {
+  background: #3a321c;
+}
+
+.b-workflow-preview {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 4px;
+  align-content: start;
+  padding: 5px;
+  overflow: auto;
+  background: #202020;
+}
+
+.b-workflow-preview label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #b8b0a0;
+  font-size: 12px;
+}
+
+.b-workflow-preview input,
+.b-workflow-preview select {
+  height: 28px;
+  min-width: 0;
+  border: 1px solid #4a4a4a;
+  background: #141414;
+  color: #eee7d8;
+  padding: 0 6px;
+}
+
+.b-workflow-preview input:focus,
+.b-workflow-preview select:focus {
+  outline: 1px solid #ffd45a;
+  border-color: #ffd45a;
+}
+
+.b-workflow-actions {
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  gap: 4px;
+  align-items: center;
+}
+
+.b-workflow-actions button {
+  width: 28px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #4c4227;
+  background: #151515;
+  color: #e9d38e;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.b-workflow-actions button:hover:not(:disabled) {
+  border-color: #ffd45a;
+  background: #302a18;
+  color: #ffd45a;
+}
+
+.b-workflow-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.b-workflow-status {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+}
+
+.b-workflow-status span,
+.b-workflow-status strong {
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid #383838;
+  background: #242424;
+  color: #bdb39f;
+  font-size: 11px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.b-workflow-status strong {
+  color: #a8e28f;
+  flex: 0 0 auto;
+}
+
+.b-workflow-status.has-warning strong {
+  border-color: #7c3e38;
+  background: rgba(120, 40, 34, 0.22);
+  color: #ff9b8e;
+}
+
+.b-workflow-warning,
+.b-workflow-ok {
+  padding: 5px 7px;
+  border: 1px solid #7c3e38;
+  background: rgba(120, 40, 34, 0.22);
+  color: #ff9b8e;
+  font-size: 12px;
+}
+
+.b-workflow-ok {
+  border-color: #4f7044;
+  background: rgba(52, 100, 47, 0.2);
+  color: #a8e28f;
+}
+
+.b-workflow-meta {
+  min-width: 0;
+  min-height: auto;
+  display: block;
+}
+
+.b-workflow-meta-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  align-items: end;
+}
+
+.b-workflow-meta-body label {
+  min-width: 0;
+  gap: 2px;
+  font-size: 11px;
+}
+
+.b-workflow-meta-body input,
+.b-workflow-meta-body select {
+  height: 24px;
+  font-size: 11px;
+}
+
+.b-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.b-ref-list > button {
+  height: auto;
+  min-height: 24px;
+  padding: 4px 6px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.b-ref-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 42px 50px 62px;
+  gap: 4px;
+  align-items: center;
+}
+
+.b-ref-row button,
+.b-ref-row select {
+  height: 25px;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.b-ref-row button {
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.b-card-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 148px;
+  padding: 4px;
+  border: 1px solid #62522d;
+  background: #191919;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
+.b-card-context-menu button {
+  width: 100%;
+  height: 25px;
+  display: block;
+  border: 0;
+  background: transparent;
+  color: #eee7d8;
+  font-size: 12px;
+  text-align: left;
+  padding: 0 8px;
+}
+
+.b-card-context-menu button:hover:not(:disabled),
+.b-card-context-menu button:focus-visible:not(:disabled) {
+  outline: none;
+  background: #3a321c;
+  color: #ffd45a;
+}
+
+.b-card-context-menu button:disabled {
+  color: #6c6659;
+}
+
+.b-card-context-menu button.danger {
+  color: #ff9b8e;
+}
+
+.b-card-context-menu button.danger:hover {
+  background: rgba(120, 40, 34, 0.38);
+  color: #ffd2cc;
+}
