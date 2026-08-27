@@ -17,12 +17,18 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	existsMany: (filePaths) => electron.ipcRenderer.invoke("file:existsMany", filePaths),
 	selectFolder: (title) => electron.ipcRenderer.invoke("file:selectFolder", title),
 	selectFileForReference: (payload) => electron.ipcRenderer.invoke("file:selectFileForReference", payload),
+	selectReferenceFolder: (payload) => electron.ipcRenderer.invoke("file:selectReferenceFolder", payload),
 	scanAnnotationFolder: () => electron.ipcRenderer.invoke("index:scanFolder"),
 	scanAnnotationFiles: () => electron.ipcRenderer.invoke("index:scanAnnotationFiles"),
 	openExternalRef: () => electron.ipcRenderer.invoke("file:openExternalRef"),
 	readTextFile: (filePath) => electron.ipcRenderer.invoke("file:readTextByPath", filePath),
 	openCRef: () => electron.ipcRenderer.invoke("file:openCRef"),
 	chooseExportFolder: () => electron.ipcRenderer.invoke("export:chooseFolder"),
-	exportAnnotationCrops: (payload) => electron.ipcRenderer.invoke("export:annotationCrops", payload)
+	exportAnnotationCrops: (payload) => electron.ipcRenderer.invoke("export:annotationCrops", payload),
+	listSubjectSchemas: () => electron.ipcRenderer.invoke("schema:list"),
+	openSubjectSchema: () => electron.ipcRenderer.invoke("schema:open"),
+	readSubjectSchemaFile: (filePath) => electron.ipcRenderer.invoke("schema:readFile", filePath),
+	saveSubjectSchema: (payload) => electron.ipcRenderer.invoke("schema:save", payload),
+	saveSubjectSchemaAs: (payload) => electron.ipcRenderer.invoke("schema:saveAs", payload)
 });
 //#endregion

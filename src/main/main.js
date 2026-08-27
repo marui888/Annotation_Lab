@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol } from 'electron'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename)
 const require = createRequire(import.meta.url)
 
 let mainWindow = null
+let schemaEditorWindow = null
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -33,6 +34,7 @@ function getAnnotationFilePath(sourceFilePath) {
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'])
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv'])
+const TEXT_EXTENSIONS = new Set(['.txt', '.md'])
 
 function sanitizeFileNamePart(value, fallback = 'untitled') {
   const cleaned = String(value || '')
@@ -75,6 +77,44 @@ function getSourceFilePathFromAnnotation(annotationFilePath) {
 
 function isCDocumentFilePath(filePath) {
   return String(filePath || '').toLowerCase().endsWith('.composite.json')
+}
+
+function getReferenceFileFilter(fileKind) {
+  if (fileKind === 'b-ref') return { name: 'Annotation JSON', extensions: ['annotation.json'] }
+  if (fileKind === 'image-ref') return { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'webp'] }
+  if (fileKind === 'text-ref') return { name: 'Text', extensions: ['txt', 'md'] }
+  if (fileKind === 'c-ref') return { name: 'Composite Document', extensions: ['composite.json'] }
+  if (fileKind === 'video-ref') return { name: 'Video', extensions: ['mp4', 'webm', 'mov', 'm4v', 'mkv'] }
+  return null
+}
+
+function isReferenceFilePath(filePath, fileKind) {
+  const fileName = path.basename(filePath).toLowerCase()
+  const ext = path.extname(fileName)
+  if (fileKind === 'b-ref') return fileName.endsWith('.annotation.json')
+  if (fileKind === 'c-ref') return fileName.endsWith('.composite.json')
+  if (fileKind === 'image-ref') return IMAGE_EXTENSIONS.has(ext)
+  if (fileKind === 'text-ref') return TEXT_EXTENSIONS.has(ext)
+  if (fileKind === 'video-ref') return VIDEO_EXTENSIONS.has(ext)
+  return true
+}
+
+async function collectReferenceFiles(folderPath, fileKind) {
+  const entries = await fs.readdir(folderPath, { withFileTypes: true })
+  const files = []
+
+  await Promise.all(entries.map(async (entry) => {
+    const entryPath = path.join(folderPath, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...await collectReferenceFiles(entryPath, fileKind))
+      return
+    }
+    if (entry.isFile() && isReferenceFilePath(entryPath, fileKind)) {
+      files.push(entryPath)
+    }
+  }))
+
+  return files.sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }))
 }
 
 function toCompositeDocumentFilePath(filePath) {
@@ -258,6 +298,101 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`))
   }
+}
+
+function loadRendererWindow(window, hash = '') {
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    window.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}${hash}`)
+    return
+  }
+
+  window.loadFile(path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`), {
+    hash: hash.replace(/^#/, ''),
+  })
+}
+
+function createSchemaEditorWindow() {
+  if (schemaEditorWindow && !schemaEditorWindow.isDestroyed()) {
+    schemaEditorWindow.focus()
+    return
+  }
+
+  schemaEditorWindow = new BrowserWindow({
+    width: 1180,
+    height: 760,
+    minWidth: 960,
+    minHeight: 620,
+    backgroundColor: '#181818',
+    title: 'Subject Schema Editor',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  })
+
+  schemaEditorWindow.on('closed', () => {
+    schemaEditorWindow = null
+  })
+
+  loadRendererWindow(schemaEditorWindow, '#/schema-editor')
+}
+
+function getSchemaFolderPath() {
+  return path.join(process.cwd(), 'schemas')
+}
+
+function isSubjectSchemaFilePath(filePath) {
+  return String(filePath || '').toLowerCase().endsWith('.subject-schema.json')
+}
+
+function toSubjectSchemaFilePath(filePath) {
+  const text = String(filePath || '')
+  if (isSubjectSchemaFilePath(text)) return text
+  if (text.toLowerCase().endsWith('.json')) {
+    return `${text.slice(0, -'.json'.length)}.subject-schema.json`
+  }
+  return `${text}.subject-schema.json`
+}
+
+function buildAppMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Tools',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        {
+          label: 'Subject Schema Editor...',
+          click: () => createSchemaEditorWindow(),
+        },
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 app.whenReady().then(() => {
@@ -653,24 +788,54 @@ app.whenReady().then(() => {
   ipcMain.handle('file:selectFileForReference', async (_event, payload) => {
     const fileKind = payload?.fileKind || 'all'
     const filters = []
-    if (fileKind === 'b-ref') filters.push({ name: 'Annotation JSON', extensions: ['annotation.json'] })
-    if (fileKind === 'image-ref') filters.push({ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'bmp', 'gif', 'webp'] })
-    if (fileKind === 'text-ref') filters.push({ name: 'Text', extensions: ['txt', 'md'] })
-    if (fileKind === 'c-ref') filters.push({ name: 'Composite Document', extensions: ['composite.json'] })
+    const filter = getReferenceFileFilter(fileKind)
+    if (filter) filters.push(filter)
     filters.push({ name: 'All Files', extensions: ['*'] })
 
     const result = await dialog.showOpenDialog(mainWindow, {
       title: payload?.title || 'Choose replacement file',
-      properties: ['openFile'],
+      properties: payload?.multiSelections ? ['openFile', 'multiSelections'] : ['openFile'],
       filters,
     })
     if (result.canceled || result.filePaths.length === 0) {
       return { ok: false, canceled: true }
     }
+    const files = result.filePaths.map((filePath) => ({
+      filePath,
+      fileName: path.basename(filePath),
+    }))
     return {
       ok: true,
-      filePath: result.filePaths[0],
-      fileName: path.basename(result.filePaths[0]),
+      filePath: files[0].filePath,
+      fileName: files[0].fileName,
+      files,
+    }
+  })
+
+  ipcMain.handle('file:selectReferenceFolder', async (_event, payload) => {
+    const fileKind = payload?.fileKind || 'all'
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: payload?.title || 'Choose source folder',
+      properties: ['openDirectory', 'multiSelections'],
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+
+    try {
+      const nestedFiles = await Promise.all(result.filePaths.map((folderPath) => collectReferenceFiles(folderPath, fileKind)))
+      const files = nestedFiles.flat().map((filePath) => ({
+        filePath,
+        fileName: path.basename(filePath),
+      }))
+      return {
+        ok: true,
+        folderPath: result.filePaths[0],
+        folderPaths: result.filePaths,
+        files,
+      }
+    } catch (error) {
+      return { ok: false, reason: error.message || String(error) }
     }
   })
 
@@ -788,6 +953,95 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('schema:list', async () => {
+    const folderPath = getSchemaFolderPath()
+    try {
+      await fs.mkdir(folderPath, { recursive: true })
+      const entries = await fs.readdir(folderPath, { withFileTypes: true })
+      const files = entries
+        .filter((entry) => entry.isFile() && isSubjectSchemaFilePath(entry.name))
+        .map((entry) => ({
+          filePath: path.join(folderPath, entry.name),
+          fileName: entry.name,
+        }))
+        .sort((left, right) => left.fileName.localeCompare(right.fileName, undefined, { numeric: true, sensitivity: 'base' }))
+      return { ok: true, folderPath, files }
+    } catch (error) {
+      return { ok: false, folderPath, reason: error.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('schema:open', async () => {
+    const result = await dialog.showOpenDialog(schemaEditorWindow || mainWindow, {
+      title: 'Open Subject Schema',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Subject Schema', extensions: ['subject-schema.json'] },
+        { name: 'JSON', extensions: ['json'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+    return readSubjectSchemaFile(result.filePaths[0])
+  })
+
+  async function readSubjectSchemaFile(filePath) {
+    try {
+      const text = await fs.readFile(filePath, 'utf8')
+      return {
+        ok: true,
+        filePath,
+        fileName: path.basename(filePath),
+        data: JSON.parse(text),
+      }
+    } catch (error) {
+      return { ok: false, filePath, reason: error.message || String(error) }
+    }
+  }
+
+  ipcMain.handle('schema:readFile', async (_event, filePath) => readSubjectSchemaFile(filePath))
+
+  ipcMain.handle('schema:save', async (_event, payload) => {
+    const filePath = payload?.filePath
+    const data = payload?.data
+    if (!filePath) return { ok: false, reason: 'schema-file-path-empty' }
+    if (!data || typeof data !== 'object') return { ok: false, reason: 'schema-data-invalid' }
+
+    try {
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8')
+      return { ok: true, filePath, fileName: path.basename(filePath) }
+    } catch (error) {
+      return { ok: false, filePath, reason: error.message || String(error) }
+    }
+  })
+
+  ipcMain.handle('schema:saveAs', async (_event, payload) => {
+    const data = payload?.data
+    if (!data || typeof data !== 'object') return { ok: false, reason: 'schema-data-invalid' }
+    const suggestedName = sanitizeFileNamePart(payload?.suggestedName || data.subjectId || 'subject', 'subject')
+    const result = await dialog.showSaveDialog(schemaEditorWindow || mainWindow, {
+      title: 'Save Subject Schema',
+      defaultPath: path.join(getSchemaFolderPath(), `${suggestedName}.subject-schema.json`),
+      filters: [
+        { name: 'Subject Schema', extensions: ['subject-schema.json'] },
+        { name: 'JSON', extensions: ['json'] },
+      ],
+    })
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true }
+    }
+
+    const filePath = toSubjectSchemaFilePath(result.filePath)
+    try {
+      await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8')
+      return { ok: true, filePath, fileName: path.basename(filePath) }
+    } catch (error) {
+      return { ok: false, filePath, reason: error.message || String(error) }
+    }
+  })
+
+  buildAppMenu()
   createWindow()
 
   app.on('activate', () => {

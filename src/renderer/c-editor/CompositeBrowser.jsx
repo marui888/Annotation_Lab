@@ -2,30 +2,27 @@ import CSelectedDetailPanel from './CSelectedDetailPanel'
 import CompositeDocumentView from './CompositeDocumentView'
 
 export default function CompositeBrowser({
-  bIndexItems = [],
   cDocument,
   cDocumentFilePath,
   onChangeItems,
   onDeleteItem,
   onOpenBRef,
+  onOpenCRef,
   onSelectItem,
   onUpdateItemText,
   panel = 'both',
-  selectedBIndexItemKey = '',
   selectedCItemId = null,
   showFilter = true,
 }) {
   const selectedTreeItem = (cDocument.items || []).flatMap(function flatten(item) {
     return [item, ...(item.children || []).flatMap(flatten)]
   }).find((item) => item.id === selectedCItemId) || null
-  const selectedBIndexItem = bIndexItems.find((item) => `${item.dataFilePath}:${item.entityId}` === selectedBIndexItemKey) || null
-
   if (panel === 'detail') {
     return (
       <CSelectedDetailPanel
         onOpenBRef={onOpenBRef}
+        onOpenCRef={onOpenCRef}
         onUpdateItemText={onUpdateItemText}
-        selectedBIndexItem={selectedBIndexItem}
         selectedCItem={selectedTreeItem}
       />
     )
@@ -39,6 +36,7 @@ export default function CompositeBrowser({
         onChangeItems={onChangeItems}
         onDeleteItem={onDeleteItem}
         onOpenBRef={onOpenBRef}
+        onOpenCRef={onOpenCRef}
         onSelectItem={onSelectItem}
         onUpdateItemText={onUpdateItemText}
         selectedCItemId={selectedCItemId}
@@ -51,13 +49,12 @@ export default function CompositeBrowser({
     <div className="composite-browser">
       <aside className="composite-browser-detail">
         <CompositeBrowser
-          bIndexItems={bIndexItems}
           cDocument={cDocument}
           cDocumentFilePath={cDocumentFilePath}
           onOpenBRef={onOpenBRef}
+          onOpenCRef={onOpenCRef}
           onUpdateItemText={onUpdateItemText}
           panel="detail"
-          selectedBIndexItemKey={selectedBIndexItemKey}
           selectedCItemId={selectedCItemId}
         />
       </aside>
@@ -68,6 +65,7 @@ export default function CompositeBrowser({
           onChangeItems={onChangeItems}
           onDeleteItem={onDeleteItem}
           onOpenBRef={onOpenBRef}
+          onOpenCRef={onOpenCRef}
           onSelectItem={onSelectItem}
           onUpdateItemText={onUpdateItemText}
           panel="document"

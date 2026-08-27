@@ -26,7 +26,6 @@ export default function CItemTreePanel({
   items,
   onChangeItems,
   onDeleteItem,
-  onOpenBRef,
   onSelectItem,
   onUpdateItemText,
   readOnly = false,
@@ -89,9 +88,6 @@ export default function CItemTreePanel({
           onChange={(event) => onUpdateItemText(selectedTreeItem.id, event.target.value)}
           value={selectedTreeItem.text}
         />
-      ) : null}
-      {showSelectedActions && selectedTreeItem?.type === 'b-ref' ? (
-        <button className="c-open-selected-b" onClick={() => onOpenBRef(selectedTreeItem)} type="button">Open Selected B</button>
       ) : null}
       {cItemMenu ? (
         (() => {

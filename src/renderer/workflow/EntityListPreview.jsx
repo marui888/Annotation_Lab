@@ -10,19 +10,26 @@ const ENTITY_DISPLAY_TABS = [
 ]
 
 export default function EntityListPreview({
+  activeView,
   annotations,
   entity,
   getAnnotationPreview,
   imageSize,
   imageUrl,
+  onActiveViewChange,
   onNodeContextMenu,
   onSelectCards,
   previewBackgroundColor = '#ffffff',
   readOnly = true,
   selectedCardIds = [],
 }) {
-  const [viewTab, setViewTab] = useState('list')
+  const [internalViewTab, setInternalViewTab] = useState('list')
+  const viewTab = activeView || internalViewTab
   const validation = entity ? validateDomainEntity(entity) : null
+  const setViewTab = (nextViewTab) => {
+    if (!activeView) setInternalViewTab(nextViewTab)
+    onActiveViewChange?.(nextViewTab)
+  }
 
   if (!entity) {
     return <div className="entity-list-preview-empty">No Entity selected.</div>

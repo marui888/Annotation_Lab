@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "subjectId": "english",
+  "label": "英语",
+  "description": "面向初高中英语词汇、语法、翻译、阅读、写作和教学讲义整理的主题语义模型。",
+  "version": "1.0.0",
+  "entityKinds": [
+    {
+      "value": "word",
+      "label": "单词",
+      "description": "单词、词形、释义、用法、发音和例句。"
+    },
+    {
+      "value": "phrase",
+      "label": "短语",
+      "description": "固定搭配、动词短语、介词短语或表达片段。"
+    },
+    {
+      "value": "sentence",
+      "label": "句子",
+      "description": "一个句子、句子片段或句子分析对象。"
+    },
+    {
+      "value": "translation",
+      "label": "翻译",
+      "description": "原文、译文、翻译策略和中英差异。"
+    },
+    {
+      "value": "grammar",
+      "label": "语法",
+      "description": "语法现象、语法规则、结构分析或语法难点。"
+    },
+    {
+      "value": "pattern",
+      "label": "句型句式",
+      "description": "可复用的句型、表达框架或结构模板。"
+    },
+    {
+      "value": "writing",
+      "label": "写作表达",
+      "description": "写作素材、表达优化、衔接、修辞和语篇组织。"
+    },
+    {
+      "value": "reading",
+      "label": "阅读材料",
+      "description": "阅读文本、段落、主旨、细节和推理。"
+    },
+    {
+      "value": "pronunciation",
+      "label": "发音",
+      "description": "音标、连读、弱读、变音或多音。"
+    },
+    {
+      "value": "mistake",
+      "label": "易错误解",
+      "description": "错误表达、歧义、误解、不通顺或不规范。"
+    },
+    {
+      "value": "summary",
+      "label": "总结",
+      "description": "知识点总结、复盘、归纳或教学备注。"
+    }
+  ],
+  "rolesByKind": {
+    "word": [
+      { "value": "word", "label": "单词", "required": true },
+      { "value": "definition", "label": "释义", "required": false },
+      { "value": "pronunciation", "label": "发音", "required": false },
+      { "value": "usage", "label": "用法", "required": false },
+      { "value": "example", "label": "例句", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "phrase": [
+      { "value": "phrase", "label": "短语", "required": true },
+      { "value": "definition", "label": "释义", "required": false },
+      { "value": "usage", "label": "用法", "required": false },
+      { "value": "example", "label": "例句", "required": false },
+      { "value": "contrast", "label": "对比", "required": false }
+    ],
+    "sentence": [
+      { "value": "sentence", "label": "句子", "required": true },
+      { "value": "translation", "label": "译文", "required": false },
+      { "value": "grammarPoint", "label": "语法点", "required": false },
+      { "value": "analysis", "label": "分析", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "translation": [
+      { "value": "original", "label": "原文", "required": true },
+      { "value": "translation", "label": "译文", "required": false },
+      { "value": "strategy", "label": "翻译策略", "required": false },
+      { "value": "analysis", "label": "分析", "required": false },
+      { "value": "contrast", "label": "中英对比", "required": false }
+    ],
+    "grammar": [
+      { "value": "grammarPoint", "label": "语法点", "required": true },
+      { "value": "example", "label": "例句", "required": false },
+      { "value": "analysis", "label": "分析", "required": false },
+      { "value": "rule", "label": "规则", "required": false },
+      { "value": "exception", "label": "例外", "required": false }
+    ],
+    "pattern": [
+      { "value": "pattern", "label": "句型", "required": true },
+      { "value": "sentence", "label": "例句", "required": false },
+      { "value": "translation", "label": "译文", "required": false },
+      { "value": "analysis", "label": "分析", "required": false }
+    ],
+    "writing": [
+      { "value": "expression", "label": "表达", "required": true },
+      { "value": "context", "label": "语境", "required": false },
+      { "value": "revision", "label": "改写", "required": false },
+      { "value": "comment", "label": "点评", "required": false }
+    ],
+    "reading": [
+      { "value": "original", "label": "原文", "required": true },
+      { "value": "question", "label": "问题", "required": false },
+      { "value": "answer", "label": "答案", "required": false },
+      { "value": "analysis", "label": "分析", "required": false }
+    ],
+    "pronunciation": [
+      { "value": "word", "label": "单词", "required": true },
+      { "value": "pronunciation", "label": "发音", "required": true },
+      { "value": "rule", "label": "规则", "required": false },
+      { "value": "example", "label": "例子", "required": false }
+    ],
+    "mistake": [
+      { "value": "mistakePoint", "label": "错误点", "required": true },
+      { "value": "wrongExpression", "label": "错误表达", "required": false },
+      { "value": "correction", "label": "修正表达", "required": false },
+      { "value": "reason", "label": "原因", "required": false },
+      { "value": "warning", "label": "提醒", "required": false }
+    ],
+    "summary": [
+      { "value": "summary", "label": "总结", "required": true },
+      { "value": "knowledgePoint", "label": "知识点", "required": false },
+      { "value": "example", "label": "例子", "required": false },
+      { "value": "reflection", "label": "反思", "required": false }
+    ]
+  },
+  "featureGroups": [
+    {
+      "key": "grammarCategories",
+      "label": "语法",
+      "multi": true,
+      "values": [
+        { "value": "tense-aspect", "label": "动词的时与体" },
+        { "value": "passive", "label": "被动" },
+        { "value": "subjunctive", "label": "虚拟语气" },
+        { "value": "non-finite", "label": "非谓语" },
+        { "value": "relative-clause", "label": "定语从句" },
+        { "value": "noun-clause", "label": "名词性从句" },
+        { "value": "adverbial-clause", "label": "状语从句" },
+        { "value": "comparison", "label": "比较句" },
+        { "value": "preposition", "label": "介词" },
+        { "value": "adverb", "label": "副词" },
+        { "value": "complement", "label": "补语" },
+        { "value": "theme-rheme", "label": "主位述位" }
+      ]
+    },
+    {
+      "key": "sentencePatterns",
+      "label": "句型句式",
+      "multi": true,
+      "values": [
+        { "value": "sentence-pattern", "label": "句型句式" },
+        { "value": "long-short-transform", "label": "长短句转化" },
+        { "value": "coordination-subordination", "label": "简单并列复合句转化" },
+        { "value": "delayed-modifier", "label": "拖后结构" },
+        { "value": "inanimate-subject", "label": "无灵句" },
+        { "value": "there-be", "label": "there be句型" },
+        { "value": "as-as", "label": "as...as比较句" },
+        { "value": "question-word-emphasis", "label": "疑问词强调句" }
+      ]
+    },
+    {
+      "key": "translationTags",
+      "label": "翻译",
+      "multi": true,
+      "values": [
+        { "value": "cn-en-not-one-to-one", "label": "中英非一一对应" },
+        { "value": "addition-omission", "label": "增译减译" },
+        { "value": "passive-translation", "label": "中英被动" },
+        { "value": "semantic-shift", "label": "含义转化" },
+        { "value": "hypotaxis-parataxis", "label": "形合意合" },
+        { "value": "subject-shift", "label": "主语转换" },
+        { "value": "time-place-person-shift", "label": "时间地点事件人物转化" }
+      ]
+    },
+    {
+      "key": "semanticLogicTags",
+      "label": "语义逻辑",
+      "multi": true,
+      "values": [
+        { "value": "double-multiple-meaning", "label": "双重性多重性" },
+        { "value": "reference-loss", "label": "指代丢失" },
+        { "value": "time-loss", "label": "时间丢失" },
+        { "value": "gender-loss", "label": "性别丢失" },
+        { "value": "context-dependent-meaning", "label": "含义依赖于上下文" },
+        { "value": "context-dependent-logic", "label": "逻辑关系依赖于上下文" },
+        { "value": "context-dependent-action", "label": "动作是否执行依赖于上下文" },
+        { "value": "anaphora-generalization", "label": "情境复指 情境泛指 情境指代" }
+      ]
+    },
+    {
+      "key": "mistakeTags",
+      "label": "易错误解",
+      "multi": true,
+      "values": [
+        { "value": "tense-collocation-error", "label": "时态搭配错误" },
+        { "value": "inaccurate-language", "label": "英语使用不准确不规范不通顺不标准" },
+        { "value": "ambiguity", "label": "歧义误解" },
+        { "value": "bad-logic", "label": "观点错误或表达不当或语言逻辑连贯有问题" },
+        { "value": "dictionary-difference", "label": "与词典不同或没有" },
+        { "value": "dangling", "label": "悬垂句" },
+        { "value": "confusable", "label": "一形两用容易误解" }
+      ]
+    },
+    {
+      "key": "wordTags",
+      "label": "词汇",
+      "multi": true,
+      "values": [
+        { "value": "word-phrase", "label": "单词短语" },
+        { "value": "cognate-collocation", "label": "同源搭配" },
+        { "value": "pronunciation-change", "label": "发音变音" },
+        { "value": "polyphone", "label": "多音字" },
+        { "value": "preposition-adverb", "label": "介副词" },
+        { "value": "prep-pron-conj", "label": "介代连" }
+      ]
+    },
+    {
+      "key": "teachingTags",
+      "label": "教学用途",
+      "multi": true,
+      "values": [
+        { "value": "important-detail", "label": "知识点细节重点" },
+        { "value": "negative-example", "label": "反面教材" },
+        { "value": "positive-example", "label": "正面榜样" },
+        { "value": "question", "label": "没看懂-有疑惑" },
+        { "value": "reflection", "label": "感悟体会" },
+        { "value": "writing", "label": "写作" },
+        { "value": "oral", "label": "口语" }
+      ]
+    },
+    {
+      "key": "difficulty",
+      "label": "难度",
+      "multi": false,
+      "values": [
+        { "value": "basic", "label": "基础" },
+        { "value": "medium", "label": "中档" },
+        { "value": "advanced", "label": "拔高" },
+        { "value": "error-prone", "label": "易错" }
+      ]
+    },
+    {
+      "key": "usage",
+      "label": "使用场景",
+      "multi": true,
+      "values": [
+        { "value": "vocabulary", "label": "词汇讲解" },
+        { "value": "grammar-teaching", "label": "语法讲解" },
+        { "value": "translation-training", "label": "翻译训练" },
+        { "value": "writing-material", "label": "写作素材" },
+        { "value": "reading-analysis", "label": "阅读分析" },
+        { "value": "classroom-example", "label": "课堂例句" },
+        { "value": "mistake-review", "label": "错题整理" }
+      ]
+    },
+    {
+      "key": "keywords",
+      "label": "关键词",
+      "multi": true,
+      "values": []
+    }
+  ],
+  "relationTypes": [
+    { "value": "translation-of", "label": "翻译对应" },
+    { "value": "grammar-of", "label": "语法分析自" },
+    { "value": "example-of", "label": "例句属于" },
+    { "value": "explains", "label": "解释" },
+    { "value": "confusable-with", "label": "易混淆" },
+    { "value": "same-pattern-as", "label": "同句型" },
+    { "value": "rewritten-from", "label": "改写自" }
+  ],
+  "validationRules": [
+    {
+      "id": "english-entity-min-a-object",
+      "type": "minAObjectCount",
+      "level": "error",
+      "min": 1,
+      "message": "英语 Entity 至少需要包含一个 A 标记。"
+    },
+    {
+      "id": "english-translation-required-original",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "translation",
+      "role": "original",
+      "message": "翻译 Entity 必须包含原文。"
+    },
+    {
+      "id": "english-word-required-word",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "word",
+      "role": "word",
+      "message": "单词 Entity 必须包含单词。"
+    },
+    {
+      "id": "english-grammar-required-grammar-point",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "grammar",
+      "role": "grammarPoint",
+      "message": "语法 Entity 必须包含语法点。"
+    },
+    {
+      "id": "english-sentence-recommend-translation",
+      "type": "recommendedRole",
+      "level": "warning",
+      "kind": "sentence",
+      "role": "translation",
+      "message": "建议句子 Entity 包含译文，便于讲义生成。"
+    }
+  ],
+  "uiHints": {
+    "defaultKind": "sentence",
+    "defaultLabel": "英语 Entity",
+    "kindDisplayOrder": ["sentence", "translation", "grammar", "pattern", "word", "phrase", "writing", "reading", "pronunciation", "mistake", "summary"],
+    "featureGroupDisplayOrder": ["grammarCategories", "sentencePatterns", "translationTags", "semanticLogicTags", "mistakeTags", "wordTags", "teachingTags", "difficulty", "usage", "keywords"],
+    "primaryFeatureGroups": ["grammarCategories", "sentencePatterns", "translationTags", "difficulty", "usage"]
+  }
+}

@@ -50,29 +50,31 @@ export default function EntityRawPreview({
   }
 
   return (
-    <TreeList
-      emptyText="No A Cards in current Entity."
-      onNodeContextMenu={onNodeContextMenu}
-      onSelect={handleSelect}
-      readOnly={readOnly}
-      selectedIds={selectedCardIds}
-      tree={entityTree}
-      renderNode={(node) => {
-        const previewEntry = previewEntries.find((entry) => entry.node.id === node.id)
-        const annotation = previewEntry?.annotation
-        return (
-          <APreviewCard
-            annotation={annotation}
-            imageUrl={previewEntry?.imageUrl}
-            imageSize={previewEntry?.imageSize}
-            index={flatCards.findIndex((card) => card.id === node.id)}
-            layoutScale={sharedScale}
-            previewBackgroundColor={previewBackgroundColor}
-            showAnnotationFrame={showAnnotationFrame}
-            showInfo={false}
-          />
-        )
-      }}
-    />
+    <div className="entity-raw-preview no-animation">
+      <TreeList
+        emptyText="No A Cards in current Entity."
+        onNodeContextMenu={onNodeContextMenu}
+        onSelect={handleSelect}
+        readOnly={readOnly}
+        selectedIds={selectedCardIds}
+        tree={entityTree}
+        renderNode={(node) => {
+          const previewEntry = previewEntries.find((entry) => entry.node.id === node.id)
+          const annotation = previewEntry?.annotation
+          return (
+            <APreviewCard
+              annotation={annotation}
+              imageUrl={previewEntry?.imageUrl}
+              imageSize={previewEntry?.imageSize}
+              index={flatCards.findIndex((card) => card.id === node.id)}
+              layoutScale={sharedScale}
+              previewBackgroundColor={previewBackgroundColor}
+              showAnnotationFrame={showAnnotationFrame}
+              showInfo={false}
+            />
+          )
+        }}
+      />
+    </div>
   )
 }

@@ -8,14 +8,15 @@ import {
 import CompositeBrowser from './CompositeBrowser'
 import PickCompositeItemsDialog from './PickCompositeItemsDialog'
 import CReferenceRepairDialog from './reference-repair/CReferenceRepairDialog'
+import EntityRawPreview from '../workflow/EntityRawPreview'
 
 const MIN_SOURCE_WIDTH = 220
 const MIN_BUILDER_WIDTH = 300
 const MIN_PREVIEW_WIDTH = 260
 const DEFAULT_C_EDITOR_COLUMNS = {
-  source: 300,
-  builder: 390,
-  preview: 460,
+  source: 'calc((100% - 10px) / 3)',
+  builder: 'calc((100% - 10px) / 3)',
+  preview: 'calc((100% - 10px) / 3)',
 }
 const MIN_BUILDER_CONTROL_HEIGHT = 48
 const MIN_BUILDER_PREVIEW_HEIGHT = 80
@@ -35,14 +36,17 @@ const SOURCE_TYPES = [
 const SOURCE_FILE_CONFIG = {
   composite: {
     title: 'Add Composite source file',
+    folderTitle: 'Add Composite source folder',
     fileKind: 'c-ref',
   },
   image: {
     title: 'Add Image source file',
+    folderTitle: 'Add Image source folder',
     fileKind: 'image-ref',
   },
   text: {
     title: 'Add Text source file',
+    folderTitle: 'Add Text source folder',
     fileKind: 'text-ref',
   },
 }
@@ -106,6 +110,7 @@ export default function CompositeEditor({
   onChangeItems,
   onDeleteItem,
   onOpenBRef,
+  onOpenCRef,
   onScanAnnotationFiles,
   onScanFolders,
   onLayoutStateChange,
@@ -119,6 +124,8 @@ export default function CompositeEditor({
   selectedCItemId,
 }) {
   const builderRef = useRef(null)
+  const selectedDetailRef = useRef(null)
+  const sourceAreaRef = useRef(null)
   const effectiveLayoutState = useMemo(() => ({
     ...DEFAULT_COMPOSITE_LAYOUT,
     ...layoutState,
@@ -135,6 +142,7 @@ export default function CompositeEditor({
   const [repairDialogOpen, setRepairDialogOpen] = useState(false)
   const [resizingBuilderControl, setResizingBuilderControl] = useState(false)
   const [resizingColumn, setResizingColumn] = useState(null)
+  const [expandedBSourcePreview, setExpandedBSourcePreview] = useState({ key: '', status: 'idle' })
   const filteredBIndexItems = getFilteredBIndexItems(bIndexItems, bIndexFilter)
   const subjectOptions = getUniqueValues(bIndexItems, (item) => item.subject)
   const kindOptions = getUniqueValues(
@@ -147,6 +155,11 @@ export default function CompositeEditor({
   const activeSourceItemCount = activeSourceType === 'b-entity'
     ? filteredBIndexItems.length
     : activeExternalSourceItems.length
+  const expandedBSourceKey = selectedBIndexItemKey
+  const selectedBSourceItem = bIndexItems.find((item) => getBIndexItemKey(item) === expandedBSourceKey) || null
+  const currentExpandedBSourcePreview = selectedBSourceItem && expandedBSourcePreview.key === expandedBSourceKey
+    ? expandedBSourcePreview
+    : { key: expandedBSourceKey, status: selectedBSourceItem ? 'loading' : 'idle' }
 
   const updateLayoutState = useCallback((patch) => {
     onLayoutStateChange?.({
@@ -225,13 +238,83 @@ export default function CompositeEditor({
     return () => window.clearTimeout(timer)
   }, [repairRequestId])
 
+  useEffect(() => {
+    const selectedBItem = selectedBSourceItem
+    if (!selectedBItem) return undefined
+    if (expandedBSourcePreview.key === expandedBSourceKey) return undefined
+
+    let canceled = false
+    async function loadBSourcePreview() {
+      const result = await window.labApi?.loadAnnotationFileByPath?.(selectedBItem.dataFilePath)
+      if (canceled) return
+      if (!result?.ok) {
+        setExpandedBSourcePreview({
+          key: expandedBSourceKey,
+          status: 'ready',
+          ok: false,
+          reason: result?.reason || 'loadAnnotationFileByPath-unavailable',
+        })
+        return
+      }
+      const entity = (result.data?.entities || []).find((item) => item.id === selectedBItem.entityId) || null
+      setExpandedBSourcePreview({
+        key: expandedBSourceKey,
+        status: 'ready',
+        ok: Boolean(entity),
+        annotations: result.data?.annotations || [],
+        entity,
+        imageSize: result.image?.width && result.image?.height
+          ? { width: result.image.width, height: result.image.height }
+          : null,
+        imageUrl: result.image?.fileUrl || '',
+        reason: entity ? '' : 'entity-not-found',
+      })
+    }
+    loadBSourcePreview()
+    return () => {
+      canceled = true
+    }
+  }, [expandedBSourceKey, expandedBSourcePreview.key, selectedBSourceItem])
+
   const startColumnResize = (column, event) => {
     event.preventDefault()
+    const startWidth = column === 'source'
+      ? selectedDetailRef.current?.getBoundingClientRect().width
+      : sourceAreaRef.current?.getBoundingClientRect().width
     setResizingColumn({
       column,
       startX: event.clientX,
-      startWidth: columnWidths[column],
+      startWidth: startWidth || (column === 'source' ? MIN_SOURCE_WIDTH : MIN_PREVIEW_WIDTH),
     })
+  }
+
+  const createExternalSourceItems = async (files, sourceType) => {
+    const nextItems = await Promise.all(files.map(async (file) => {
+      let meta = {}
+      if (sourceType === 'composite') {
+        const readResult = await window.labApi?.readCDocumentFile?.(file.filePath)
+        if (readResult?.ok) {
+          meta = {
+            title: readResult.data?.title || file.fileName,
+            itemCount: readResult.data?.items?.length || 0,
+          }
+        }
+      }
+
+      return {
+        id: `${sourceType}:${file.filePath}`,
+        sourceType,
+        filePath: file.filePath,
+        fileName: file.fileName,
+        fileKind: sourceType,
+        ...meta,
+      }
+    }))
+
+    setExternalSourceItems((current) => [
+      ...nextItems,
+      ...current.filter((item) => !nextItems.some((nextItem) => nextItem.id === item.id)),
+    ])
   }
 
   const addExternalSourceFile = async () => {
@@ -240,33 +323,45 @@ export default function CompositeEditor({
     const result = await window.labApi?.selectFileForReference?.({
       fileKind: config.fileKind,
       title: config.title,
+      multiSelections: true,
     })
     if (!result?.ok) return
 
-    let meta = {}
-    if (activeSourceType === 'composite') {
-      const readResult = await window.labApi?.readCDocumentFile?.(result.filePath)
-      if (readResult?.ok) {
-        meta = {
-          title: readResult.data?.title || result.fileName,
-          itemCount: readResult.data?.items?.length || 0,
-        }
-      }
-    }
-
-    const nextItem = {
-      id: `${activeSourceType}:${result.filePath}`,
-      sourceType: activeSourceType,
-      filePath: result.filePath,
-      fileName: result.fileName,
-      fileKind: activeSourceType,
-      ...meta,
-    }
-    setExternalSourceItems((current) => [
-      nextItem,
-      ...current.filter((item) => item.id !== nextItem.id),
-    ])
+    await createExternalSourceItems(result.files || [result], activeSourceType)
   }
+
+  const addExternalSourceFolder = async () => {
+    const config = SOURCE_FILE_CONFIG[activeSourceType]
+    if (!config) return
+    const result = await window.labApi?.selectReferenceFolder?.({
+      fileKind: config.fileKind,
+      title: config.folderTitle,
+    })
+    if (!result?.ok) return
+    await createExternalSourceItems(result.files || [], activeSourceType)
+  }
+
+  const clearActiveExternalSources = () => {
+    setExternalSourceItems((current) => current.filter((item) => item.sourceType !== activeSourceType))
+  }
+
+  const renderExternalSourceActions = () => {
+    const canAddFromFolder = Boolean(SOURCE_FILE_CONFIG[activeSourceType])
+    return (
+      <div className="c-source-actions">
+        <button disabled={!canAddFromFolder} onClick={addExternalSourceFolder} type="button">From folder</button>
+        <button disabled={!canAddFromFolder} onClick={addExternalSourceFile} type="button">Add File</button>
+        <button disabled={activeExternalSourceItems.length === 0} onClick={clearActiveExternalSources} type="button">Clear</button>
+      </div>
+    )
+  }
+
+  const renderBEntitySourceActions = () => (
+    <div className="c-source-actions">
+      <button onClick={onScanFolders} type="button">From folder</button>
+      <button onClick={onScanAnnotationFiles} type="button">Add File</button>
+    </div>
+  )
 
   const addExternalSourceItemToDocument = (item) => {
     if (!item) return
@@ -317,8 +412,28 @@ export default function CompositeEditor({
     setPickingCompositeSource(null)
   }
 
-  const clearActiveExternalSources = () => {
-    setExternalSourceItems((current) => current.filter((item) => item.sourceType !== activeSourceType))
+  const addWholePickedComposite = (source) => {
+    if (!source?.filePath) return
+    if (cDocumentFilePath && source.filePath === cDocumentFilePath) {
+      window.alert('Cannot add current C document as its own C Ref.')
+      return
+    }
+    onAddCRefItem({
+      ok: true,
+      filePath: source.filePath,
+      fileName: source.fileName,
+    })
+  }
+
+  const openWholePickedComposite = (source) => {
+    if (!source?.filePath) return
+    onOpenCRef?.({
+      type: 'c-ref',
+      ref: {
+        cFilePath: source.filePath,
+      },
+    })
+    setPickingCompositeSource(null)
   }
 
   const renderExternalSourcePool = () => {
@@ -329,10 +444,7 @@ export default function CompositeEditor({
     return (
       <>
         <div className="section-title">{SOURCE_TYPES.find((item) => item.id === activeSourceType)?.label}</div>
-        <div className="c-source-actions">
-          <button onClick={addExternalSourceFile} type="button">Add Source</button>
-          <button disabled={activeExternalSourceItems.length === 0} onClick={clearActiveExternalSources} type="button">Clear</button>
-        </div>
+        {renderExternalSourceActions()}
         <div className="c-pool-list">
           {activeExternalSourceItems.length === 0 ? (
             <div className="empty-state">No source files.</div>
@@ -340,11 +452,17 @@ export default function CompositeEditor({
             <div className="c-external-source-row" key={item.id}>
               {item.sourceType === 'composite' ? (
                 <div className="c-external-source-actions">
-                  <button onClick={() => addExternalSourceItemToDocument(item)} type="button">Whole</button>
-                  <button onClick={() => openPickCompositeItemsDialog(item)} type="button">Pick</button>
+                  <button data-tooltip="Add Whole" onClick={() => addExternalSourceItemToDocument(item)} type="button">
+                    <i className="fa-solid fa-file-circle-plus" />
+                  </button>
+                  <button data-tooltip="Pick Items" onClick={() => openPickCompositeItemsDialog(item)} type="button">
+                    <i className="fa-solid fa-list-check" />
+                  </button>
                 </div>
               ) : (
-                <button onClick={() => addExternalSourceItemToDocument(item)} type="button">Add</button>
+                <button data-tooltip="Add" onClick={() => addExternalSourceItemToDocument(item)} type="button">
+                  <i className="fa-solid fa-plus" />
+                </button>
               )}
               <div title={item.filePath}>
                 <strong>{item.title || item.fileName}</strong>
@@ -367,10 +485,7 @@ export default function CompositeEditor({
         {activeSourceType === 'b-entity' ? (
           <>
             <div className="section-title">B Entity Sources</div>
-            <div className="c-source-actions">
-              <button onClick={onScanFolders} type="button">Add Folders</button>
-              <button onClick={onScanAnnotationFiles} type="button">Add Annotation Files</button>
-            </div>
+            {renderBEntitySourceActions()}
             <div className="c-source-list">
               {bIndexSources.length === 0 ? (
                 <div className="empty-state">No B sources.</div>
@@ -437,15 +552,57 @@ export default function CompositeEditor({
                 <div className="empty-state">No B Entity matched.</div>
               ) : filteredBIndexItems.map((item) => (
                 <div
-                  className={getBIndexItemKey(item) === selectedBIndexItemKey ? 'c-pool-row selected' : 'c-pool-row'}
+                  className={getBIndexItemKey(item) === selectedBIndexItemKey ? 'c-pool-row selected expanded' : 'c-pool-row'}
                   key={getBIndexItemKey(item)}
                   onClick={() => onSelectBIndexItem(item)}
                 >
-                  <button onClick={(event) => { event.stopPropagation(); onAddBIndexItem(item) }} type="button">Add</button>
-                  <div title={item.dataFilePath}>
-                    <strong>{item.subject} / {item.kind}</strong>
-                    <small>{item.label} / {item.aObjectCount} A / {item.ruleOk ? 'Rule OK' : 'Rule issue'}</small>
+                  <div className="c-pool-row-main">
+                    <div className="c-pool-row-actions">
+                      <button data-tooltip="Add" onClick={(event) => { event.stopPropagation(); onAddBIndexItem(item) }} type="button">
+                        <i className="fa-solid fa-plus" />
+                      </button>
+                      <button
+                        data-tooltip="Open"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onOpenBRef({
+                            type: 'b-ref',
+                            ref: {
+                              dataFilePath: item.dataFilePath,
+                              entityId: item.entityId,
+                              sourceFilePath: item.sourceFilePath,
+                            },
+                          })
+                        }}
+                        type="button"
+                      >
+                        <i className="fa-solid fa-up-right-from-square" />
+                      </button>
+                    </div>
+                    <div title={item.dataFilePath}>
+                      <strong>{item.subject} / {item.kind}</strong>
+                      <small>{item.label} / {item.aObjectCount} A / {item.ruleOk ? 'Rule OK' : 'Rule issue'}</small>
+                    </div>
                   </div>
+                  {getBIndexItemKey(item) === selectedBIndexItemKey ? (
+                    <div className="c-pool-row-preview" onClick={(event) => event.stopPropagation()}>
+                      {currentExpandedBSourcePreview.status === 'loading' ? (
+                        <div className="c-preview-load-state">Loading Entity preview...</div>
+                      ) : currentExpandedBSourcePreview.ok && currentExpandedBSourcePreview.entity ? (
+                        <EntityRawPreview
+                          annotations={currentExpandedBSourcePreview.annotations}
+                          entity={currentExpandedBSourcePreview.entity}
+                          imageSize={currentExpandedBSourcePreview.imageSize}
+                          imageUrl={currentExpandedBSourcePreview.imageUrl}
+                          readOnly
+                          showAnnotationFrame
+                          useSharedScale
+                        />
+                      ) : (
+                        <div className="c-preview-load-state">{currentExpandedBSourcePreview.reason || 'Entity preview unavailable.'}</div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -476,12 +633,17 @@ export default function CompositeEditor({
   return (
     <section className="c-editor">
       <div className="c-editor-body">
-        <aside className="c-selected-detail" style={{ flexBasis: columnWidths.source }}>
+        <aside
+          className="c-selected-detail"
+          ref={selectedDetailRef}
+          style={{ flexBasis: columnWidths.source }}
+        >
           <CompositeBrowser
             bIndexItems={bIndexItems}
             cDocument={cDocument}
             cDocumentFilePath={cDocumentFilePath}
             onOpenBRef={onOpenBRef}
+            onOpenCRef={onOpenCRef}
             onUpdateItemText={onUpdateItemText}
             panel="detail"
             selectedBIndexItemKey={selectedBIndexItemKey}
@@ -497,7 +659,10 @@ export default function CompositeEditor({
           title="Resize selected detail"
         />
 
-        <section className="c-builder" style={{ minWidth: MIN_BUILDER_WIDTH }}>
+        <section
+          className="c-builder"
+          style={{ flexBasis: columnWidths.builder, minWidth: MIN_BUILDER_WIDTH }}
+        >
           <div
             className="c-builder-workspace"
             ref={builderRef}
@@ -512,6 +677,7 @@ export default function CompositeEditor({
                 onChangeItems={onChangeItems}
                 onDeleteItem={onDeleteItem}
                 onOpenBRef={onOpenBRef}
+                onOpenCRef={onOpenCRef}
                 onSelectItem={onSelectItem}
                 onUpdateItemText={onUpdateItemText}
                 panel="document"
@@ -578,7 +744,11 @@ export default function CompositeEditor({
           title="Resize preview"
         />
 
-        <aside className="c-source-area" style={{ flexBasis: columnWidths.preview }}>
+        <aside
+          className="c-source-area"
+          ref={sourceAreaRef}
+          style={{ flexBasis: columnWidths.preview }}
+        >
           <div className="section-title">Sources</div>
           {renderSourcePool()}
         </aside>
@@ -604,9 +774,12 @@ export default function CompositeEditor({
       ) : null}
       {pickingCompositeSource ? (
         <PickCompositeItemsDialog
+          fileName={pickingCompositeSource.fileName}
           filePath={pickingCompositeSource.filePath}
+          onAddWhole={addWholePickedComposite}
           onAddSelected={addPickedCompositeItems}
           onClose={() => setPickingCompositeSource(null)}
+          onOpenWhole={openWholePickedComposite}
           sourceDocument={pickingCompositeSource.data}
         />
       ) : null}

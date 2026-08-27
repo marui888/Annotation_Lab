@@ -180,10 +180,12 @@ function CPreviewNode({
 }
 
 export default function CompositeListPreview({
+  activeView,
   cDocument,
   cDocumentFilePath,
   onChangeItems,
   onDeleteItem,
+  onActiveViewChange,
   onOpenBRef,
   onSelectItem,
   onUpdateItemText,
@@ -193,7 +195,12 @@ export default function CompositeListPreview({
   const [previewBackgroundColor, setPreviewBackgroundColor] = useState(DEFAULT_PREVIEW_BACKGROUND)
   const [previewScaleFactor, setPreviewScaleFactor] = useState(1)
   const [showAnnotationFrame, setShowAnnotationFrame] = useState(true)
-  const [viewTab, setViewTab] = useState('list')
+  const [internalViewTab, setInternalViewTab] = useState('list')
+  const viewTab = activeView || internalViewTab
+  const setViewTab = (nextViewTab) => {
+    if (!activeView) setInternalViewTab(nextViewTab)
+    onActiveViewChange?.(nextViewTab)
+  }
 
   const changePreviewScale = (delta) => {
     setPreviewScaleFactor((current) => Math.max(0.5, Math.min(3, Number((current + delta).toFixed(2)))))

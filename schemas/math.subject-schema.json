@@ -1,0 +1,294 @@
+{
+  "schemaVersion": 1,
+  "subjectId": "math",
+  "label": "数学",
+  "description": "面向初高中数学教学、题库整理、讲义编写和错题复盘的主题语义模型。",
+  "version": "1.0.0",
+  "entityKinds": [
+    {
+      "value": "problem",
+      "label": "题目",
+      "description": "一个完整题目或题目的核心片段。"
+    },
+    {
+      "value": "solution",
+      "label": "解答",
+      "description": "题目的解答过程、证明过程或计算过程。"
+    },
+    {
+      "value": "explanation",
+      "label": "讲解",
+      "description": "面向教学表达的讲解、提示、板书或口头说明。"
+    },
+    {
+      "value": "knowledge",
+      "label": "知识点",
+      "description": "概念、定理、结论、二级结论或知识补充。"
+    },
+    {
+      "value": "method",
+      "label": "方法技巧",
+      "description": "解题方法、技巧、策略或操作手法。"
+    },
+    {
+      "value": "model",
+      "label": "模型",
+      "description": "母题模型、图形模型、代数结构或通用框架。"
+    },
+    {
+      "value": "mistake",
+      "label": "错题易错",
+      "description": "错题、易错点、误解点、歧义点或典型错误。"
+    },
+    {
+      "value": "summary",
+      "label": "总结",
+      "description": "回顾、复盘、小结、模型总结或教学反思。"
+    },
+    {
+      "value": "variant",
+      "label": "变式题",
+      "description": "母题衍生、变式、子题或同构题。"
+    }
+  ],
+  "rolesByKind": {
+    "problem": [
+      { "value": "stem", "label": "题干", "required": true },
+      { "value": "condition", "label": "条件", "required": false },
+      { "value": "question", "label": "问法", "required": false },
+      { "value": "figure", "label": "图形", "required": false },
+      { "value": "option", "label": "选项", "required": false },
+      { "value": "answer", "label": "答案", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "solution": [
+      { "value": "solution", "label": "解答过程", "required": true },
+      { "value": "keyStep", "label": "关键步骤", "required": false },
+      { "value": "analysis", "label": "思路分析", "required": false },
+      { "value": "answer", "label": "答案", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "explanation": [
+      { "value": "explanation", "label": "讲解", "required": true },
+      { "value": "teacherComment", "label": "教师点评", "required": false },
+      { "value": "blackboard", "label": "板书", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "knowledge": [
+      { "value": "knowledgePoint", "label": "知识点", "required": true },
+      { "value": "definition", "label": "概念定义", "required": false },
+      { "value": "conclusion", "label": "结论", "required": false },
+      { "value": "example", "label": "例子", "required": false },
+      { "value": "remark", "label": "补充", "required": false }
+    ],
+    "method": [
+      { "value": "method", "label": "方法", "required": true },
+      { "value": "condition", "label": "适用条件", "required": false },
+      { "value": "example", "label": "例子", "required": false },
+      { "value": "warning", "label": "注意", "required": false }
+    ],
+    "model": [
+      { "value": "model", "label": "模型", "required": true },
+      { "value": "figure", "label": "图形", "required": false },
+      { "value": "structure", "label": "结构", "required": false },
+      { "value": "variant", "label": "变式", "required": false },
+      { "value": "summary", "label": "总结", "required": false }
+    ],
+    "mistake": [
+      { "value": "mistakePoint", "label": "出错点", "required": true },
+      { "value": "wrongAnswer", "label": "错误答案", "required": false },
+      { "value": "reason", "label": "原因", "required": false },
+      { "value": "correction", "label": "修正", "required": false },
+      { "value": "warning", "label": "提醒", "required": false }
+    ],
+    "summary": [
+      { "value": "summary", "label": "总结", "required": true },
+      { "value": "knowledgePoint", "label": "知识点", "required": false },
+      { "value": "method", "label": "方法", "required": false },
+      { "value": "reflection", "label": "反思", "required": false }
+    ],
+    "variant": [
+      { "value": "stem", "label": "题干", "required": true },
+      { "value": "variantRelation", "label": "变式关系", "required": false },
+      { "value": "answer", "label": "答案", "required": false },
+      { "value": "analysis", "label": "分析", "required": false }
+    ]
+  },
+  "featureGroups": [
+    {
+      "key": "textbookSections",
+      "label": "课本章节",
+      "multi": true,
+      "values": [
+        { "value": "sets", "label": "集合" },
+        { "value": "function", "label": "函数" },
+        { "value": "trigonometry", "label": "三角函数" },
+        { "value": "sequence", "label": "数列" },
+        { "value": "inequality", "label": "不等式" },
+        { "value": "derivative", "label": "导数" },
+        { "value": "solid-geometry", "label": "立体几何" },
+        { "value": "analytic-geometry", "label": "解析几何" },
+        { "value": "conic", "label": "圆锥曲线" },
+        { "value": "probability-statistics", "label": "概率统计" }
+      ]
+    },
+    {
+      "key": "knowledgePoints",
+      "label": "知识点",
+      "multi": true,
+      "values": [
+        { "value": "concept-definition", "label": "概念定义" },
+        { "value": "secondary-conclusion", "label": "二级结论" },
+        { "value": "domain-range", "label": "定义域和值域" },
+        { "value": "monotonicity", "label": "单调性" },
+        { "value": "equivalence", "label": "等价命题充分必要增根减根" },
+        { "value": "homogeneous-symmetry", "label": "齐次对称" },
+        { "value": "algebraic-structure", "label": "代数结构" },
+        { "value": "pole-polar", "label": "极点极线" }
+      ]
+    },
+    {
+      "key": "methods",
+      "label": "技巧方法",
+      "multi": true,
+      "values": [
+        { "value": "set-without-solving", "label": "设而不求" },
+        { "value": "reverse-thinking", "label": "正难则反" },
+        { "value": "whole-substitution", "label": "整体代换" },
+        { "value": "delayed-substitution", "label": "延迟代换延迟换元" },
+        { "value": "elimination", "label": "消元" },
+        { "value": "construct-function", "label": "构造函数关系" },
+        { "value": "scaling", "label": "放缩" },
+        { "value": "classification", "label": "分类讨论" },
+        { "value": "local-global", "label": "整体局部" },
+        { "value": "sum-product-switch", "label": "和积互换" }
+      ]
+    },
+    {
+      "key": "models",
+      "label": "模型图形",
+      "multi": true,
+      "values": [
+        { "value": "mother-child-problem", "label": "母题子题" },
+        { "value": "framework-problem", "label": "框架题" },
+        { "value": "basic-method", "label": "基本法" },
+        { "value": "isomorphism", "label": "同构" },
+        { "value": "four-points-six-lines", "label": "四点六线三交叉点" },
+        { "value": "conic-triangle-incenter", "label": "圆锥曲线与三角形内心" }
+      ]
+    },
+    {
+      "key": "mistakeTags",
+      "label": "错题易错",
+      "multi": true,
+      "values": [
+        { "value": "classic-error", "label": "经典典型错误" },
+        { "value": "ambiguous", "label": "混淆误解歧义" },
+        { "value": "broken-thinking", "label": "思路间断点" },
+        { "value": "wrong-substitution", "label": "不恰当换元不恰当消元" },
+        { "value": "problem-flaw", "label": "题目有瑕疵有问题" },
+        { "value": "confusable-detail", "label": "细节区别例外混淆对比辨析" }
+      ]
+    },
+    {
+      "key": "teachingTags",
+      "label": "教学评价",
+      "multi": true,
+      "values": [
+        { "value": "good-explanation", "label": "讲得好-妙解" },
+        { "value": "needs-improvement", "label": "没讲好-需要优化或改进或错误" },
+        { "value": "inaccurate-expression", "label": "没讲好-表达不准确有偏差" },
+        { "value": "teacher-said", "label": "老师说" },
+        { "value": "review-summary", "label": "回顾复盘小结" },
+        { "value": "make-derivative", "label": "生成衍生" }
+      ]
+    },
+    {
+      "key": "difficulty",
+      "label": "难度",
+      "multi": false,
+      "values": [
+        { "value": "basic", "label": "基础" },
+        { "value": "medium", "label": "中档" },
+        { "value": "advanced", "label": "拔高" },
+        { "value": "final", "label": "压轴" },
+        { "value": "error-prone", "label": "易错" }
+      ]
+    },
+    {
+      "key": "usage",
+      "label": "教学用途",
+      "multi": true,
+      "values": [
+        { "value": "classroom", "label": "课堂讲解" },
+        { "value": "homework", "label": "作业" },
+        { "value": "exam", "label": "测验" },
+        { "value": "handout", "label": "专题讲义" },
+        { "value": "question-bank", "label": "题库" },
+        { "value": "wrong-problem-book", "label": "错题整理" }
+      ]
+    },
+    {
+      "key": "keywords",
+      "label": "关键词",
+      "multi": true,
+      "values": []
+    }
+  ],
+  "relationTypes": [
+    { "value": "variant-of", "label": "变式自" },
+    { "value": "same-model-as", "label": "同模型" },
+    { "value": "uses-method", "label": "使用方法" },
+    { "value": "explains", "label": "解释" },
+    { "value": "confusable-with", "label": "易混淆" },
+    { "value": "requires-knowledge", "label": "依赖知识点" }
+  ],
+  "validationRules": [
+    {
+      "id": "math-entity-min-a-object",
+      "type": "minAObjectCount",
+      "level": "error",
+      "min": 1,
+      "message": "数学 Entity 至少需要包含一个 A 标记。"
+    },
+    {
+      "id": "math-problem-required-stem",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "problem",
+      "role": "stem",
+      "message": "题目必须包含题干。"
+    },
+    {
+      "id": "math-solution-required-solution",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "solution",
+      "role": "solution",
+      "message": "解答必须包含解答过程。"
+    },
+    {
+      "id": "math-mistake-required-mistake-point",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "mistake",
+      "role": "mistakePoint",
+      "message": "错题易错 Entity 必须包含出错点。"
+    },
+    {
+      "id": "math-problem-recommend-difficulty",
+      "type": "recommendedFeature",
+      "level": "warning",
+      "kind": "problem",
+      "featureGroup": "difficulty",
+      "message": "建议为题目设置难度，便于选题。"
+    }
+  ],
+  "uiHints": {
+    "defaultKind": "problem",
+    "defaultLabel": "数学 Entity",
+    "kindDisplayOrder": ["problem", "solution", "explanation", "knowledge", "method", "model", "mistake", "summary", "variant"],
+    "featureGroupDisplayOrder": ["textbookSections", "knowledgePoints", "methods", "models", "mistakeTags", "teachingTags", "difficulty", "usage", "keywords"],
+    "primaryFeatureGroups": ["textbookSections", "knowledgePoints", "methods", "difficulty", "usage"]
+  }
+}

@@ -10,8 +10,11 @@ const INITIAL_DETAIL_WIDTH = 320
 
 export default function PickCompositeItemsDialog({
   filePath,
+  fileName,
+  onAddWhole,
   onAddSelected,
   onClose,
+  onOpenWhole,
   sourceDocument,
 }) {
   const cDocument = useMemo(() => normalizeCDocument(sourceDocument), [sourceDocument])
@@ -152,7 +155,9 @@ export default function PickCompositeItemsDialog({
 
         <footer className="pick-composite-footer">
           <span>Selected: <strong>{selectedItem ? '1' : '0'}</strong></span>
+          <button onClick={() => onAddWhole?.({ filePath, fileName, sourceDocument: cDocument })} type="button">Add Whole</button>
           <button disabled={!selectedItem} onClick={addSelected} type="button">Add Selected</button>
+          <button onClick={() => onOpenWhole?.({ filePath, fileName, sourceDocument: cDocument })} type="button">Open</button>
           <button onClick={onClose} type="button">Close</button>
         </footer>
       </div>

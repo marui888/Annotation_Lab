@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('labApi', {
   existsMany: (filePaths) => ipcRenderer.invoke('file:existsMany', filePaths),
   selectFolder: (title) => ipcRenderer.invoke('file:selectFolder', title),
   selectFileForReference: (payload) => ipcRenderer.invoke('file:selectFileForReference', payload),
+  selectReferenceFolder: (payload) => ipcRenderer.invoke('file:selectReferenceFolder', payload),
   scanAnnotationFolder: () => ipcRenderer.invoke('index:scanFolder'),
   scanAnnotationFiles: () => ipcRenderer.invoke('index:scanAnnotationFiles'),
   openExternalRef: () => ipcRenderer.invoke('file:openExternalRef'),
@@ -24,4 +25,9 @@ contextBridge.exposeInMainWorld('labApi', {
   openCRef: () => ipcRenderer.invoke('file:openCRef'),
   chooseExportFolder: () => ipcRenderer.invoke('export:chooseFolder'),
   exportAnnotationCrops: (payload) => ipcRenderer.invoke('export:annotationCrops', payload),
+  listSubjectSchemas: () => ipcRenderer.invoke('schema:list'),
+  openSubjectSchema: () => ipcRenderer.invoke('schema:open'),
+  readSubjectSchemaFile: (filePath) => ipcRenderer.invoke('schema:readFile', filePath),
+  saveSubjectSchema: (payload) => ipcRenderer.invoke('schema:save', payload),
+  saveSubjectSchemaAs: (payload) => ipcRenderer.invoke('schema:saveAs', payload),
 })

@@ -319,41 +319,54 @@ button.active-tool {
   font-weight: 700;
 }
 
-.workspace-tab-close {
-  width: 22px;
-  height: 100%;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid #36565d;
-  background: transparent;
-  color: #93cfdc;
-  font-size: 12px;
-  line-height: 1;
-}
-
-.workspace-tab-close:hover {
-  background: #4a221f;
-  color: #ffb0a8;
-}
-
 .workspace-tab.ab.active {
   border-color: #ffd45a;
   background: #3a321c;
   color: #ffd45a;
 }
 
-.workspace-tab.c {
-  border-color: #36565d;
-}
-
-.workspace-tab.c .workspace-tab-main span {
-  background: #73d6e8;
+.workspace-tab.ab.active .workspace-tab-main span {
+  background: #ffd45a;
+  color: #111;
 }
 
 .workspace-tab.c.active {
   border-color: #73d6e8;
   background: #18333a;
   color: #c7f7ff;
+}
+
+.workspace-tab.c.active .workspace-tab-main span {
+  background: #73d6e8;
+  color: #071316;
+}
+
+.workspace-tab-context-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 104px;
+  padding: 4px;
+  border: 1px solid #5b5140;
+  background: #1f1f1f;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+.workspace-tab-context-menu button {
+  width: 100%;
+  height: 25px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: #efe4c8;
+  text-align: left;
+  font-size: 12px;
+}
+
+.workspace-tab-context-menu button:hover,
+.workspace-tab-context-menu button:focus-visible {
+  outline: none;
+  background: #3a321c;
+  color: #ffd45a;
 }
 
 .ab-workspace {

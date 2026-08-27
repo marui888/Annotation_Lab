@@ -48,6 +48,14 @@ const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
 const LEFT_PANEL_DEFAULT_WIDTH = 180
 const LEFT_PANEL_MIN_WIDTH = 132
 const PANEL_MAX_WIDTH = 560
+const DEFAULT_C_WORKSPACE_LAYOUT = {
+  columnWidths: {
+    source: 'calc((100% - 10px) / 3)',
+    builder: 'calc((100% - 10px) / 3)',
+    preview: 'calc((100% - 10px) / 3)',
+  },
+  builderControlHeight: 142,
+}
 
 const LEFT_TABS = [
   { id: 'entityFiles', icon: 'fa-solid fa-screwdriver-wrench', label: 'EntityFiles' },
@@ -141,14 +149,7 @@ const createEmptyCWorkspace = (overrides = {}) => ({
   },
   selectedBIndexItemKey: '',
   selectedCItemId: null,
-  layoutState: {
-    columnWidths: {
-      source: 300,
-      builder: 390,
-      preview: 460,
-    },
-    builderControlHeight: 142,
-  },
+  layoutState: DEFAULT_C_WORKSPACE_LAYOUT,
   ...overrides,
 })
 
@@ -222,6 +223,7 @@ function App() {
   const [pendingEditorOpenInput, setPendingEditorOpenInput] = useState(null)
   const [pendingEditorCloseSessionId, setPendingEditorCloseSessionId] = useState(null)
   const [pendingCompositeOpenResult, setPendingCompositeOpenResult] = useState(null)
+  const [workspaceTabMenu, setWorkspaceTabMenu] = useState(null)
   const [currentABInput, setCurrentABInput] = useState(null)
   const [pendingABInput, setPendingABInput] = useState(null)
   const [editorWorkspace, setEditorWorkspace] = useState(() => INITIAL_EDITOR_WORKSPACE)
@@ -354,6 +356,7 @@ function App() {
 
   const requestActivateWorkspaceTab = (workspaceId) => {
     if (workspaceId === activeWorkspaceTabId) return true
+    setWorkspaceTabMenu(null)
     if (workspaceId.startsWith('c-')) {
       setActiveWorkspaceTabId(workspaceId)
       return true
@@ -366,6 +369,20 @@ function App() {
     if (!hasUnsavedCWorkspaceChanges(workspace)) return true
     return window.confirm('Current C document has unsaved changes. Discard them?')
   }
+
+  const openWorkspaceTabMenu = (event, tab) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 112
+    const menuHeight = 72
+    setWorkspaceTabMenu({
+      tabId: tab.id,
+      x: clamp(event.clientX + 2, 8, Math.max(8, window.innerWidth - menuWidth - 8)),
+      y: clamp(event.clientY + 2, 8, Math.max(8, window.innerHeight - menuHeight - 8)),
+    })
+  }
+
+  const closeWorkspaceTabMenu = () => setWorkspaceTabMenu(null)
 
   useEffect(() => {
     if (!resizingPanel) return undefined
@@ -390,6 +407,24 @@ function App() {
       window.removeEventListener('mouseup', handleMouseUp)
     }
   }, [resizingPanel])
+
+  useEffect(() => {
+    if (!workspaceTabMenu) return undefined
+
+    const closeMenu = () => closeWorkspaceTabMenu()
+    const closeMenuOnEscape = (event) => {
+      if (event.key === 'Escape') closeWorkspaceTabMenu()
+    }
+
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('contextmenu', closeMenu)
+    window.addEventListener('keydown', closeMenuOnEscape)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('contextmenu', closeMenu)
+      window.removeEventListener('keydown', closeMenuOnEscape)
+    }
+  }, [workspaceTabMenu])
 
   useEffect(() => {
     if (!bindFrameDialogDrag) return undefined
@@ -547,6 +582,20 @@ function App() {
       buildAnnotationDocumentFromSession(session),
       session.annotationFilePath
     )
+    if (result?.ok) {
+      setEditorWorkspace((current) => ({
+        ...current,
+        sessions: current.sessions.map((item) => (
+          item.id === session.id
+            ? {
+                ...item,
+                annotationFilePath: result.annotationFilePath || item.annotationFilePath,
+                saveStatus: 'Saved',
+              }
+            : item
+        )),
+      }))
+    }
     return Boolean(result?.ok)
   }
 
@@ -1853,9 +1902,8 @@ function App() {
     }
   }
 
-  const saveCDocumentToPath = async (filePath) => {
+  const saveCDocumentToPath = async (filePath, workspaceId = activeCWorkspaceId) => {
     if (!filePath) return false
-    const workspaceId = activeCWorkspaceId
     const workspace = cWorkspaces[workspaceId] || activeCWorkspace
     const data = normalizeCDocument(workspace.cDocument)
     updateCWorkspace(workspaceId, { cSaveStatus: 'Saving...' })
@@ -1880,10 +1928,48 @@ function App() {
     await saveCDocumentAs()
   }
 
-  const saveCDocumentAs = async () => {
-    const result = await window.labApi?.chooseCDocumentPath?.(activeCWorkspace.cDocument.title)
+  const saveCDocumentAs = async (workspaceId = activeCWorkspaceId) => {
+    const workspace = cWorkspaces[workspaceId] || activeCWorkspace
+    const result = await window.labApi?.chooseCDocumentPath?.(workspace.cDocument.title)
     if (!result?.ok) return
-    await saveCDocumentToPath(result.filePath)
+    await saveCDocumentToPath(result.filePath, workspaceId)
+  }
+
+  const saveWorkspaceTab = async (tabId) => {
+    const tab = workspaceTabs.find((item) => item.id === tabId)
+    if (!tab) return
+
+    closeWorkspaceTabMenu()
+    if (tab.type === 'ab') {
+      if (tabId === editorWorkspace.activeId) {
+        await saveAnnotations()
+        return
+      }
+
+      const session = getEditorSessionSnapshot(tabId)
+      await saveEditorSessionSnapshot(session)
+      return
+    }
+
+    const workspace = cWorkspaces[tabId]
+    if (!workspace) return
+    if (workspace.cDocumentFilePath) {
+      await saveCDocumentToPath(workspace.cDocumentFilePath, tabId)
+      return
+    }
+
+    await saveCDocumentAs(tabId)
+  }
+
+  const closeWorkspaceTab = (tabId) => {
+    const tab = workspaceTabs.find((item) => item.id === tabId)
+    if (!tab) return
+    closeWorkspaceTabMenu()
+    if (tab.type === 'ab') {
+      requestCloseEditorSession(tabId)
+      return
+    }
+    requestCloseCWorkspace(tabId)
   }
 
   const updateCDocumentField = (field, value) => {
@@ -2050,6 +2136,17 @@ function App() {
     setAbInspectorTab('b')
     setSelectedEntityId(item.ref.entityId)
     if (sameSource) setSelectedAnnotationIds([])
+  }
+
+  const openCRefFromCItem = async (item) => {
+    if (item?.type !== 'c-ref' || !item.ref?.cFilePath) return
+    const result = await window.labApi?.readCDocumentFile?.(item.ref.cFilePath)
+    if (!result?.ok) return
+    openCDocumentInNewWorkspace({
+      ok: true,
+      data: result.data,
+      filePath: item.ref.cFilePath,
+    })
   }
 
   const renderAObjectRow = (annotation, index) => {
@@ -2553,6 +2650,7 @@ function App() {
                 tab.id === activeWorkspaceTab.id ? 'active' : '',
               ].filter(Boolean).join(' ')}
               key={tab.id}
+              onContextMenu={(event) => openWorkspaceTabMenu(event, tab)}
               title={tab.title}
             >
               <button
@@ -2564,29 +2662,23 @@ function App() {
                 <strong>{tab.title}</strong>
                 {tab.dirty ? <em>Unsaved</em> : null}
               </button>
-              {tab.type === 'ab' ? (
-                <button
-                  className="workspace-tab-close"
-                  onClick={(event) => requestCloseEditorSession(tab.id, event)}
-                  title="Close ABEditor"
-                  type="button"
-                >
-                  x
-                </button>
-              ) : null}
-              {tab.type === 'c' ? (
-                <button
-                  className="workspace-tab-close"
-                  onClick={(event) => requestCloseCWorkspace(tab.id, event)}
-                  title="Close CompositeEditor"
-                  type="button"
-                >
-                  x
-                </button>
-              ) : null}
             </div>
           ))}
         </div>
+        {workspaceTabMenu ? (
+          <div
+            className="workspace-tab-context-menu"
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.stopPropagation()}
+            style={{
+              left: workspaceTabMenu.x,
+              top: workspaceTabMenu.y,
+            }}
+          >
+            <button onClick={() => saveWorkspaceTab(workspaceTabMenu.tabId)} type="button">Save</button>
+            <button onClick={() => closeWorkspaceTab(workspaceTabMenu.tabId)} type="button">Close</button>
+          </div>
+        ) : null}
         {activeWorkspaceTab.type === 'c' ? (
           <CompositeEditor
             bIndexItems={activeCWorkspace.bIndexItems}
@@ -2603,6 +2695,7 @@ function App() {
             onChangeItems={changeCItems}
             onDeleteItem={deleteCItem}
             onOpenBRef={openBRefFromCItem}
+            onOpenCRef={openCRefFromCItem}
             onScanAnnotationFiles={scanBEntityAnnotationFiles}
             onScanFolders={scanBEntityIndex}
             onLayoutStateChange={updateActiveCLayoutState}

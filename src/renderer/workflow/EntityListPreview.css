@@ -173,3 +173,9 @@
 .entity-list-preview-paper .a-preview-info small {
   color: #222;
 }
+
+.entity-raw-preview.no-animation,
+.entity-raw-preview.no-animation * {
+  transition: none !important;
+  animation: none !important;
+}
