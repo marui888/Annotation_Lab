@@ -329,25 +329,27 @@ export default function CompositeListPreview({
               scale={previewScaleFactor}
               showFrame={showAnnotationFrame}
             />
-            {cDocument.items.length === 0 ? (
-              <div className="c-preview-empty">No C items.</div>
-            ) : (
-              <ul className="c-preview-tree">
-                {cDocument.items.map((item) => (
-                  <CPreviewNode
-                    currentCFilePath={cDocumentFilePath}
-                    key={item.id}
-                    maxDepth={MAX_C_REF_PREVIEW_DEPTH}
-                    node={item}
-                    previewBackgroundColor={previewBackgroundColor}
-                    previewData={previewData}
-                    previewScaleFactor={previewScaleFactor}
-                    showAnnotationFrame={showAnnotationFrame}
-                    visitedCFiles={cDocumentFilePath ? [cDocumentFilePath] : []}
-                  />
-                ))}
-              </ul>
-            )}
+            <div className="c-preview-scroll">
+              {cDocument.items.length === 0 ? (
+                <div className="c-preview-empty">No C items.</div>
+              ) : (
+                <ul className="c-preview-tree">
+                  {cDocument.items.map((item) => (
+                    <CPreviewNode
+                      currentCFilePath={cDocumentFilePath}
+                      key={item.id}
+                      maxDepth={MAX_C_REF_PREVIEW_DEPTH}
+                      node={item}
+                      previewBackgroundColor={previewBackgroundColor}
+                      previewData={previewData}
+                      previewScaleFactor={previewScaleFactor}
+                      showAnnotationFrame={showAnnotationFrame}
+                      visitedCFiles={cDocumentFilePath ? [cDocumentFilePath] : []}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -28,7 +28,16 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	listSubjectSchemas: () => electron.ipcRenderer.invoke("schema:list"),
 	openSubjectSchema: () => electron.ipcRenderer.invoke("schema:open"),
 	readSubjectSchemaFile: (filePath) => electron.ipcRenderer.invoke("schema:readFile", filePath),
+	copySubjectSchema: (filePath) => electron.ipcRenderer.invoke("schema:copy", filePath),
+	deleteSubjectSchema: (filePath) => electron.ipcRenderer.invoke("schema:delete", filePath),
 	saveSubjectSchema: (payload) => electron.ipcRenderer.invoke("schema:save", payload),
-	saveSubjectSchemaAs: (payload) => electron.ipcRenderer.invoke("schema:saveAs", payload)
+	saveSubjectSchemaAs: (payload) => electron.ipcRenderer.invoke("schema:saveAs", payload),
+	readSettings: () => electron.ipcRenderer.invoke("settings:read"),
+	saveSettings: (settings) => electron.ipcRenderer.invoke("settings:save", settings),
+	onOpenSettings: (callback) => {
+		const listener = () => callback?.();
+		electron.ipcRenderer.on("settings:open", listener);
+		return () => electron.ipcRenderer.removeListener("settings:open", listener);
+	}
 });
 //#endregion

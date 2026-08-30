@@ -20,6 +20,7 @@ export function captureVideoFrameSnapshot({
       if (timeoutId) window.clearTimeout(timeoutId)
       video.removeAttribute('src')
       video.load()
+      video.remove()
     }
 
     const finish = (result) => {
@@ -42,6 +43,9 @@ export function captureVideoFrameSnapshot({
     video.style.position = 'fixed'
     video.style.left = '-10000px'
     video.style.top = '-10000px'
+    video.style.width = '1px'
+    video.style.height = '1px'
+    document.body.appendChild(video)
 
     video.addEventListener('error', () => {
       finish({
@@ -55,7 +59,14 @@ export function captureVideoFrameSnapshot({
       const safeTime = duration === null
         ? Math.max(0, time)
         : Math.max(0, Math.min(time, Math.max(0, duration - 0.05)))
-      video.currentTime = safeTime
+      try {
+        video.currentTime = safeTime
+      } catch (error) {
+        finish({
+          ok: false,
+          reason: error?.message || 'video-snapshot-seek-failed',
+        })
+      }
     })
 
     video.addEventListener('seeked', () => {

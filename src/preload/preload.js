@@ -28,6 +28,15 @@ contextBridge.exposeInMainWorld('labApi', {
   listSubjectSchemas: () => ipcRenderer.invoke('schema:list'),
   openSubjectSchema: () => ipcRenderer.invoke('schema:open'),
   readSubjectSchemaFile: (filePath) => ipcRenderer.invoke('schema:readFile', filePath),
+  copySubjectSchema: (filePath) => ipcRenderer.invoke('schema:copy', filePath),
+  deleteSubjectSchema: (filePath) => ipcRenderer.invoke('schema:delete', filePath),
   saveSubjectSchema: (payload) => ipcRenderer.invoke('schema:save', payload),
   saveSubjectSchemaAs: (payload) => ipcRenderer.invoke('schema:saveAs', payload),
+  readSettings: () => ipcRenderer.invoke('settings:read'),
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  onOpenSettings: (callback) => {
+    const listener = () => callback?.()
+    ipcRenderer.on('settings:open', listener)
+    return () => ipcRenderer.removeListener('settings:open', listener)
+  },
 })

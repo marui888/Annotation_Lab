@@ -314,26 +314,35 @@ body.c-editor-row-resizing {
 
 .c-preview-paper {
   position: relative;
+  min-width: 0;
   min-height: 260px;
-  padding: 12px;
   border: 1px solid #d6d1c8;
   background: var(--c-preview-background, #fff);
   color: #1e1e1e;
+  overflow: hidden;
+}
+
+.c-preview-scroll {
+  min-width: 0;
+  min-height: 260px;
+  max-height: 100%;
+  padding: 12px;
   overflow: auto;
+  background: var(--c-preview-background, #fff);
   scrollbar-color: #bbb #f3f3f3;
   scrollbar-width: thin;
 }
 
-.c-preview-paper::-webkit-scrollbar {
+.c-preview-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.c-preview-paper::-webkit-scrollbar-track {
+.c-preview-scroll::-webkit-scrollbar-track {
   background: #f3f3f3;
 }
 
-.c-preview-paper::-webkit-scrollbar-thumb {
+.c-preview-scroll::-webkit-scrollbar-thumb {
   background: #bbb;
   border-radius: 6px;
 }
@@ -343,11 +352,6 @@ body.c-editor-row-resizing {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.c-preview-paper > .preview-control-overlay + .c-preview-empty,
-.c-preview-paper > .preview-control-overlay + .c-preview-tree {
-  margin-top: 0;
 }
 
 .c-preview-tree-children {
@@ -575,16 +579,70 @@ body.c-editor-row-resizing {
   font-size: 12px;
 }
 
-.c-pool-filter {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.entity-source-filter {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  padding: 7px;
+  padding: 6px;
   border: 1px solid #333;
   background: #1f1f1f;
 }
 
-.c-pool-filter label {
+.entity-source-filter-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.entity-source-filter-head button {
+  height: 23px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.entity-source-filter-head span {
+  color: #ffd45a;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.entity-source-filter-head small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #8f8778;
+  font-size: 11px;
+}
+
+.entity-source-filter-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.entity-filter-row,
+.entity-filter-feature-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 6px;
+}
+
+.entity-filter-row.compact {
+  grid-template-columns: minmax(82px, 112px) auto minmax(0, 1fr);
+  align-items: end;
+}
+
+.entity-filter-row label.wide {
+  grid-column: 1 / -1;
+}
+
+.entity-source-filter label {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -593,8 +651,8 @@ body.c-editor-row-resizing {
   font-size: 11px;
 }
 
-.c-pool-filter input,
-.c-pool-filter select {
+.entity-source-filter input,
+.entity-source-filter select {
   height: 24px;
   min-width: 0;
   border: 1px solid #454545;
@@ -604,15 +662,64 @@ body.c-editor-row-resizing {
   font-size: 11px;
 }
 
-.c-pool-filter select option {
+.entity-source-filter select option {
   background: #151515;
   color: #eee7d8;
 }
 
-.c-pool-filter small {
-  grid-column: 1 / -1;
-  color: #8f8778;
-  font-size: 11px;
+.entity-filter-check {
+  min-height: 24px;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 5px !important;
+  white-space: nowrap;
+}
+
+.entity-filter-check input {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+}
+
+.entity-filter-text {
+  min-width: 0;
+}
+
+.entity-filter-date-control {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 4px;
+  align-items: center;
+}
+
+.entity-filter-date-control button {
+  width: 24px;
+  height: 24px;
+  min-width: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #454545;
+  background: #151515;
+  color: #cfc7b8;
+  cursor: pointer;
+}
+
+.entity-filter-date-control button:hover:not(:disabled) {
+  border-color: #ffd45a;
+  color: #ffd45a;
+}
+
+.entity-filter-date-control button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.entity-filter-date-control input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.9) sepia(0.25) saturate(2) hue-rotate(350deg);
+  opacity: 0.9;
+  cursor: pointer;
 }
 
 .c-source-row,

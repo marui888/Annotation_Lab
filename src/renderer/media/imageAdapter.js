@@ -28,6 +28,7 @@ export function createImageFrame(source) {
     id: createId('frame'),
     sourceId: source.id,
     kind: 'image',
+    timeStamp: null,
     locator: {},
   }
 }

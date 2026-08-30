@@ -9,6 +9,7 @@ var __dirname = path.dirname(__filename);
 var require = createRequire(import.meta.url);
 var mainWindow = null;
 var schemaEditorWindow = null;
+var DEFAULT_SETTINGS = { frameTimestampToleranceSeconds: .1 };
 protocol.registerSchemesAsPrivileged([{
 	scheme: "lab-file",
 	privileges: {
@@ -23,6 +24,30 @@ function toLabFileUrl(filePath) {
 }
 function getAnnotationFilePath(sourceFilePath) {
 	return `${sourceFilePath}.annotation.json`;
+}
+function getSettingsFilePath() {
+	return path.join(process.cwd(), "lab-settings.json");
+}
+function normalizeSettings(settings = {}) {
+	const tolerance = Number(settings.frameTimestampToleranceSeconds);
+	return {
+		...DEFAULT_SETTINGS,
+		...settings,
+		frameTimestampToleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : DEFAULT_SETTINGS.frameTimestampToleranceSeconds
+	};
+}
+async function readSettings() {
+	try {
+		const text = await fs.readFile(getSettingsFilePath(), "utf8");
+		return normalizeSettings(JSON.parse(text));
+	} catch {
+		return normalizeSettings();
+	}
+}
+async function writeSettings(settings) {
+	const nextSettings = normalizeSettings(settings);
+	await fs.writeFile(getSettingsFilePath(), `${JSON.stringify(nextSettings, null, 2)}\n`, "utf8");
+	return nextSettings;
 }
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([
 	".jpg",
@@ -230,7 +255,12 @@ async function readBEntityIndexItem(dataFilePath) {
 			entityId: entity.id,
 			subject: entity.subject,
 			kind: entity.kind,
+			subKind: entity.subKind || "",
 			label: entity.label,
+			status: entity.status || "",
+			featureValues: entity.featureValues || {},
+			createdAt: entity.createdAt || "",
+			updatedAt: entity.updatedAt || "",
 			aObjectCount: refs.length,
 			aObjectRefs: refs
 		};
@@ -274,7 +304,10 @@ function createSchemaEditorWindow() {
 		schemaEditorWindow.focus();
 		return;
 	}
+	const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
 	schemaEditorWindow = new BrowserWindow({
+		parent: parentWindow || void 0,
+		modal: Boolean(parentWindow),
 		width: 1180,
 		height: 760,
 		minWidth: 960,
@@ -328,6 +361,11 @@ function buildAppMenu() {
 		{
 			label: "Tools",
 			submenu: [
+				{
+					label: "Settings...",
+					click: () => mainWindow?.webContents.send("settings:open")
+				},
+				{ type: "separator" },
 				{ role: "reload" },
 				{ role: "forceReload" },
 				{ role: "toggleDevTools" },
@@ -345,6 +383,16 @@ app.whenReady().then(() => {
 		const filePath = fromLabFileUrl(request.url);
 		return net.fetch(pathToFileURL(filePath).toString());
 	});
+	ipcMain.handle("settings:read", async () => ({
+		ok: true,
+		settings: await readSettings(),
+		filePath: getSettingsFilePath()
+	}));
+	ipcMain.handle("settings:save", async (_event, settings) => ({
+		ok: true,
+		settings: await writeSettings(settings),
+		filePath: getSettingsFilePath()
+	}));
 	ipcMain.handle("file:openImage", async () => {
 		const result = await dialog.showOpenDialog(mainWindow, {
 			title: "Open image",
@@ -991,6 +1039,83 @@ app.whenReady().then(() => {
 		}
 	}
 	ipcMain.handle("schema:readFile", async (_event, filePath) => readSubjectSchemaFile(filePath));
+	async function getUniqueSubjectSchemaCopyTarget(subjectId) {
+		const folderPath = getSchemaFolderPath();
+		const baseName = sanitizeFileNamePart(subjectId || "subject-copy", "subject-copy");
+		let index = 0;
+		while (index < 1e3) {
+			const suffix = index === 0 ? "" : String(index + 1);
+			const nextSubjectId = `${subjectId}${suffix}`;
+			const filePath = path.join(folderPath, `${baseName}${suffix}.subject-schema.json`);
+			try {
+				await fs.access(filePath);
+				index += 1;
+			} catch {
+				return {
+					subjectId: nextSubjectId,
+					filePath
+				};
+			}
+		}
+		const timestamp = Date.now();
+		return {
+			subjectId: `${subjectId}_${timestamp}`,
+			filePath: path.join(folderPath, `${baseName}-${timestamp}.subject-schema.json`)
+		};
+	}
+	ipcMain.handle("schema:copy", async (_event, sourceFilePath) => {
+		if (!sourceFilePath || !isSubjectSchemaFilePath(sourceFilePath)) return {
+			ok: false,
+			reason: "schema-source-file-invalid"
+		};
+		const readResult = await readSubjectSchemaFile(sourceFilePath);
+		if (!readResult.ok) return readResult;
+		const sourceData = readResult.data || {};
+		const sourceSubjectId = sourceData.subjectId || sourceData.id || path.basename(sourceFilePath, ".subject-schema.json");
+		const copyTarget = await getUniqueSubjectSchemaCopyTarget(`${sourceSubjectId}_copy`);
+		const copiedData = {
+			...sourceData,
+			subjectId: copyTarget.subjectId,
+			label: `${sourceData.label || sourceSubjectId} Copy`,
+			updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+		};
+		try {
+			await fs.mkdir(getSchemaFolderPath(), { recursive: true });
+			const filePath = copyTarget.filePath;
+			await fs.writeFile(filePath, JSON.stringify(copiedData, null, 2), "utf8");
+			return {
+				ok: true,
+				filePath,
+				fileName: path.basename(filePath),
+				data: copiedData
+			};
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error.message || String(error)
+			};
+		}
+	});
+	ipcMain.handle("schema:delete", async (_event, filePath) => {
+		if (!filePath || !isSubjectSchemaFilePath(filePath)) return {
+			ok: false,
+			reason: "schema-file-path-invalid"
+		};
+		try {
+			await fs.unlink(filePath);
+			return {
+				ok: true,
+				filePath,
+				fileName: path.basename(filePath)
+			};
+		} catch (error) {
+			return {
+				ok: false,
+				filePath,
+				reason: error.message || String(error)
+			};
+		}
+	});
 	ipcMain.handle("schema:save", async (_event, payload) => {
 		const filePath = payload?.filePath;
 		const data = payload?.data;

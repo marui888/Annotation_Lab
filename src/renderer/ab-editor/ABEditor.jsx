@@ -19,7 +19,29 @@ const DEFAULT_AB_LAYOUT = {
   bWorkflowWidth: 420,
   inspectorWidth: 300,
   aPreviewHeight: 128,
-  bWorkflowBottomPanelHeight: 118,
+  bWorkflowBottomPanelHeight: 170,
+}
+
+function getVideoAnnotationDragChipStyle(annotation, imageDisplaySize) {
+  if (!annotation || !imageDisplaySize) return null
+
+  if (annotation.type === 'rect' || annotation.type === 'text') {
+    const rect = denormalizeRect(annotation.geometry, imageDisplaySize)
+    return {
+      left: Math.max(2, rect.x + 4),
+      top: Math.max(2, rect.y + 4),
+    }
+  }
+
+  if (annotation.type === 'arrow') {
+    const arrow = denormalizeArrow(annotation.geometry, imageDisplaySize)
+    return {
+      left: Math.max(2, Math.min(arrow.x1, arrow.x2) + 4),
+      top: Math.max(2, Math.min(arrow.y1, arrow.y2) + 4),
+    }
+  }
+
+  return null
 }
 
 function VideoFramePanel({
@@ -42,6 +64,7 @@ function VideoFramePanel({
   onEditTextAnnotation,
   onMetadata,
   onSelectAnnotation,
+  onStartAObjectDrag,
   onToolModeChange,
   onUpdateAnnotation,
   onUseVideoFrame,
@@ -63,6 +86,12 @@ function VideoFramePanel({
   const [playState, setPlayState] = useState('Paused')
   const [statusText, setStatusText] = useState('Ready')
   const [transientAnnotationIds, setTransientAnnotationIds] = useState([])
+  const isAnnotationVisibleInSourceView = (annotation) => {
+    if (!annotation || !imageDisplaySize) return false
+    if (showBindFrameOverlay) return selectedAnnotationIds.includes(annotation.id)
+    if (transientAnnotationIds.length > 0) return transientAnnotationIds.includes(annotation.id)
+    return Boolean(currentFrame?.id && playState !== 'Playing' && annotation.frameId === currentFrame.id)
+  }
   const canAnnotate = Boolean(
     imageDisplaySize
     && (
@@ -70,13 +99,12 @@ function VideoFramePanel({
       || showBindFrameOverlay
     )
   )
-  const visibleAnnotations = showBindFrameOverlay
-    ? annotations.filter((annotation) => selectedAnnotationIds.includes(annotation.id))
-    : transientAnnotationIds.length > 0
-    ? annotations.filter((annotation) => transientAnnotationIds.includes(annotation.id))
-    : canAnnotate
-      ? annotations.filter((annotation) => annotation.frameId === currentFrame.id)
-      : []
+  const visibleAnnotations = canAnnotate
+    ? annotations.filter((annotation) => isAnnotationVisibleInSourceView(annotation))
+    : []
+  const visibleSelectedAnnotations = visibleAnnotations.filter((annotation) => (
+    selectedAnnotationIds.includes(annotation.id)
+  ))
 
   useEffect(() => {
     onMetadataRef.current = onMetadata
@@ -113,7 +141,7 @@ function VideoFramePanel({
     const duration = playerRef.current.getDuration()
     const previewUrl = playerRef.current.getFrameDataUrl()
     const nextFrame = createVideoFrame(source, {
-      time: currentTime,
+      timeStamp: currentTime,
       width: videoSize.width,
       height: videoSize.height,
       duration,
@@ -313,6 +341,24 @@ function VideoFramePanel({
                 value={textDraft}
               />
             ) : null}
+            {visibleSelectedAnnotations.map((annotation) => {
+              const chipStyle = getVideoAnnotationDragChipStyle(annotation, imageDisplaySize)
+              if (!chipStyle) return null
+              return (
+                <button
+                  className="a-object-drag-chip"
+                  draggable
+                  key={annotation.id}
+                  onClick={(event) => event.stopPropagation()}
+                  onDragStart={(event) => onStartAObjectDrag?.(event, selectedAnnotationIds)}
+                  style={chipStyle}
+                  title="Drag selected A object to B Workflow"
+                  type="button"
+                >
+                  A
+                </button>
+              )
+            })}
           </div>
         ) : null}
       </div>
@@ -355,6 +401,8 @@ export default function ABEditor({
   onEditTextAnnotation,
   onExportSelectedAnnotationCrop,
   onExportSelectedEntity,
+  canGoToAnnotation,
+  onGoToAnnotation,
   onImageSizeChange,
   onLayoutStateChange,
   onSessionLoadError,
@@ -376,6 +424,7 @@ export default function ABEditor({
   selectedEntity,
   showBindFrameOverlay = false,
   source,
+  subjectSchemas,
   textDraft,
   toolMode,
   updateTextDraft,
@@ -798,6 +847,7 @@ export default function ABEditor({
                     onMetadata={onImageSizeChange}
                     playPauseRequestId={playPauseRequestId}
                     onSelectAnnotation={onSelectAnnotation}
+                    onStartAObjectDrag={startAObjectDrag}
                     onToolModeChange={onToolModeChange}
                     onUpdateAnnotation={onUpdateAnnotation}
                     onUseVideoFrame={onUseVideoFrame}
@@ -841,7 +891,11 @@ export default function ABEditor({
                   annotation={previewAnnotation}
                   imageUrl={previewAnnotationPreview?.imageUrl}
                   imageSize={previewAnnotationPreview?.imageSize}
-                  missingPreviewText={isVideoSource ? 'Building frame preview...' : 'Preview unavailable.'}
+                  missingPreviewText={isVideoSource
+                    ? previewAnnotationPreview?.reason
+                      ? `Frame preview failed: ${previewAnnotationPreview.reason}`
+                      : 'Building frame preview...'
+                    : 'Preview unavailable.'}
                   showInfo={false}
                 />
               </div>
@@ -873,8 +927,11 @@ export default function ABEditor({
           imageUrl={isVideoSource ? undefined : framePreviewUrl}
           imageSize={isVideoSource ? undefined : imageSize}
           onExportEntity={onExportSelectedEntity}
+          canGoToAnnotation={canGoToAnnotation}
+          onGoToAnnotation={onGoToAnnotation}
           selectedAnnotationIds={selectedAnnotationIds}
           selectedEntity={selectedEntity}
+          subjectSchemas={subjectSchemas}
           onCreateEntity={onCreateEntity}
           onBottomPanelHeightChange={(nextHeight) => {
             updateLayoutState({ bWorkflowBottomPanelHeight: nextHeight })

@@ -13,6 +13,7 @@ export function createEmptySubjectSchema() {
     uiHints: {
       defaultKind: '',
       defaultLabel: 'New Entity',
+      defaultSubKindsByKind: {},
       kindDisplayOrder: [],
       featureGroupDisplayOrder: [],
       primaryFeatureGroups: [],
@@ -56,6 +57,7 @@ export function validateSubjectSchema(schema) {
   const validationRules = Array.isArray(schema.validationRules) ? schema.validationRules : []
   const kindSet = new Set(entityKinds.map((kind) => kind.value).filter(Boolean))
   const featureGroupSet = new Set(featureGroups.map((group) => group.key).filter(Boolean))
+  const subKindSetsByKind = new Map()
 
   collectDuplicateValues(entityKinds, (kind) => kind.value)
     .forEach((value) => issues.push(`Duplicate entity kind: ${value}`))
@@ -67,6 +69,27 @@ export function validateSubjectSchema(schema) {
   entityKinds.forEach((kind, index) => {
     if (!kind.value) issues.push(`entityKinds[${index}].value is required.`)
     if (!kind.label) warnings.push(`entityKinds[${index}] has no label.`)
+    if (kind.subKinds !== undefined && !Array.isArray(kind.subKinds)) {
+      issues.push(`entityKinds[${index}].subKinds must be an array.`)
+      return
+    }
+    collectDuplicateValues(kind.subKinds || [], (subKind) => subKind.value)
+      .forEach((value) => issues.push(`Duplicate subKind in ${kind.value || index}: ${value}`))
+    subKindSetsByKind.set(kind.value, new Set((kind.subKinds || []).map((subKind) => subKind.value).filter(Boolean)))
+    ;(kind.subKinds || []).forEach((subKind, subKindIndex) => {
+      if (!subKind.value) issues.push(`entityKinds[${index}].subKinds[${subKindIndex}].value is required.`)
+      if (!subKind.label) warnings.push(`entityKinds[${index}].subKinds[${subKindIndex}] has no label.`)
+    })
+  })
+
+  Object.entries(schema.uiHints?.defaultSubKindsByKind || {}).forEach(([kindValue, subKindValue]) => {
+    if (!kindSet.has(kindValue)) {
+      issues.push(`uiHints.defaultSubKindsByKind references unknown kind: ${kindValue}`)
+      return
+    }
+    if (subKindValue && !subKindSetsByKind.get(kindValue)?.has(subKindValue)) {
+      issues.push(`uiHints.defaultSubKindsByKind.${kindValue} references unknown subKind: ${subKindValue}`)
+    }
   })
 
   Object.entries(schema.rolesByKind || {}).forEach(([kindValue, roles]) => {
@@ -86,6 +109,12 @@ export function validateSubjectSchema(schema) {
   featureGroups.forEach((group, groupIndex) => {
     if (!group.key) issues.push(`featureGroups[${groupIndex}].key is required.`)
     if (!group.label) warnings.push(`featureGroups[${groupIndex}] has no label.`)
+    if (group.section && !['basic', 'keyword'].includes(group.section)) {
+      warnings.push(`featureGroups[${groupIndex}].section is not a known value: ${group.section}`)
+    }
+    if (group.inputMode && !['select', 'dropdown', 'manual'].includes(group.inputMode)) {
+      warnings.push(`featureGroups[${groupIndex}].inputMode is not a known value: ${group.inputMode}`)
+    }
     if (!Array.isArray(group.values)) {
       issues.push(`featureGroups[${groupIndex}].values must be an array.`)
       return

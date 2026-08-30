@@ -6,9 +6,11 @@ import {
   cloneCItemsForInsert,
 } from '../domain/cDocument'
 import CompositeBrowser from './CompositeBrowser'
+import EntitySourceFilter from './EntitySourceFilter'
 import PickCompositeItemsDialog from './PickCompositeItemsDialog'
 import CReferenceRepairDialog from './reference-repair/CReferenceRepairDialog'
 import EntityRawPreview from '../workflow/EntityRawPreview'
+import { applyEntityFilter } from '../domain/entityFilter'
 
 const MIN_SOURCE_WIDTH = 220
 const MIN_BUILDER_WIDTH = 300
@@ -69,32 +71,6 @@ function getBIndexItemKey(item) {
   return `${item.dataFilePath}:${item.entityId}`
 }
 
-function getUniqueValues(items, getValue) {
-  return Array.from(new Set(items.map(getValue).filter(Boolean))).sort((a, b) => a.localeCompare(b))
-}
-
-function getFilteredBIndexItems(items, filter) {
-  const subject = filter?.subject || 'all'
-  const kind = filter?.kind || 'all'
-  const source = filter?.source || 'all'
-  const query = String(filter?.query || '').trim().toLowerCase()
-
-  return items.filter((item) => {
-    if (subject !== 'all' && item.subject !== subject) return false
-    if (kind !== 'all' && item.kind !== kind) return false
-    if (source !== 'all' && item.dataFilePath !== source) return false
-    if (!query) return true
-    return [
-      item.label,
-      item.subject,
-      item.kind,
-      item.entityId,
-      item.dataFilePath,
-      item.sourceFilePath,
-    ].some((value) => String(value || '').toLowerCase().includes(query))
-  })
-}
-
 export default function CompositeEditor({
   bIndexItems,
   bIndexFilter,
@@ -122,6 +98,7 @@ export default function CompositeEditor({
   repairRequestId = 0,
   selectedBIndexItemKey,
   selectedCItemId,
+  subjectSchemas,
 }) {
   const builderRef = useRef(null)
   const selectedDetailRef = useRef(null)
@@ -143,13 +120,11 @@ export default function CompositeEditor({
   const [resizingBuilderControl, setResizingBuilderControl] = useState(false)
   const [resizingColumn, setResizingColumn] = useState(null)
   const [expandedBSourcePreview, setExpandedBSourcePreview] = useState({ key: '', status: 'idle' })
-  const filteredBIndexItems = getFilteredBIndexItems(bIndexItems, bIndexFilter)
-  const subjectOptions = getUniqueValues(bIndexItems, (item) => item.subject)
-  const kindOptions = getUniqueValues(
-    bIndexItems.filter((item) => !bIndexFilter?.subject || bIndexFilter.subject === 'all' || item.subject === bIndexFilter.subject),
-    (item) => item.kind,
-  )
-  const sourceOptions = getUniqueValues(bIndexItems, (item) => item.dataFilePath)
+  const filteredBIndexItems = applyEntityFilter(bIndexItems, bIndexFilter, subjectSchemas)
+  const sourceOptions = useMemo(() => (
+    Array.from(new Set(bIndexItems.map((item) => item.dataFilePath).filter(Boolean)))
+      .sort((left, right) => left.localeCompare(right))
+  ), [bIndexItems])
   const activeExternalSourceItems = externalSourceItems.filter((item) => item.sourceType === activeSourceType)
   const activeSourceLabel = SOURCE_TYPES.find((item) => item.id === activeSourceType)?.label || activeSourceType
   const activeSourceItemCount = activeSourceType === 'b-entity'
@@ -498,53 +473,14 @@ export default function CompositeEditor({
             </div>
 
             <div className="section-title">B Entity Pool</div>
-            <div className="c-pool-filter">
-              <label>
-                Subject
-                <select
-                  onChange={(event) => onUpdateBIndexFilter({ subject: event.target.value, kind: 'all' })}
-                  value={bIndexFilter?.subject || 'all'}
-                >
-                  <option value="all">All</option>
-                  {subjectOptions.map((subject) => (
-                    <option key={subject} value={subject}>{subject}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Kind
-                <select
-                  onChange={(event) => onUpdateBIndexFilter({ kind: event.target.value })}
-                  value={bIndexFilter?.kind || 'all'}
-                >
-                  <option value="all">All</option>
-                  {kindOptions.map((kind) => (
-                    <option key={kind} value={kind}>{kind}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Source
-                <select
-                  onChange={(event) => onUpdateBIndexFilter({ source: event.target.value })}
-                  value={bIndexFilter?.source || 'all'}
-                >
-                  <option value="all">All sources</option>
-                  {sourceOptions.map((sourcePath) => (
-                    <option key={sourcePath} value={sourcePath}>{sourcePath}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Find
-                <input
-                  onChange={(event) => onUpdateBIndexFilter({ query: event.target.value })}
-                  placeholder="label / kind / file"
-                  value={bIndexFilter?.query || ''}
-                />
-              </label>
-              <small>{filteredBIndexItems.length} / {bIndexItems.length}</small>
-            </div>
+            <EntitySourceFilter
+              filter={bIndexFilter}
+              items={bIndexItems}
+              onChange={onUpdateBIndexFilter}
+              resultCount={filteredBIndexItems.length}
+              sourceOptions={sourceOptions}
+              subjectSchemas={subjectSchemas}
+            />
             <div className="c-pool-list">
               {bIndexItems.length === 0 ? (
                 <div className="empty-state">No B Entity index.</div>

@@ -1,0 +1,400 @@
+{
+  "schemaVersion": 1,
+  "subjectId": "math-experimental",
+  "label": "数学-实验版",
+  "description": "面向高中数学题库、讲义、学习笔记和教学笔记的简化主题语义模型。Kind 聚合为题目、知识、评注；Role 只在题目中细分，知识和评注使用 default；特征属性分为基础部分和关键词部分。",
+  "version": "0.1.0",
+  "entityKinds": [
+    {
+      "value": "question",
+      "label": "题目",
+      "description": "面向一道题、一个例题、一个练习、一个错题、一个变式题。",
+      "subKinds": [
+        {
+          "value": "default",
+          "label": "默认"
+        },
+        {
+          "value": "example",
+          "label": "例题"
+        },
+        {
+          "value": "exercise",
+          "label": "练习题"
+        },
+        {
+          "value": "exam",
+          "label": "真题/模拟题"
+        },
+        {
+          "value": "variant",
+          "label": "变式题"
+        },
+        {
+          "value": "wrongQuestion",
+          "label": "错题"
+        },
+        {
+          "value": "openQuestion",
+          "label": "探究题"
+        }
+      ]
+    },
+    {
+      "value": "knowledge",
+      "label": "知识",
+      "description": "面向知识点、方法、模型、公式、结论、规则。",
+      "subKinds": [
+        {
+          "value": "default",
+          "label": "默认子类"
+        },
+        {
+          "value": "conceptDefinition",
+          "label": "概念定义"
+        },
+        {
+          "value": "theoremFormula",
+          "label": "定理公式结论"
+        },
+        {
+          "value": "method",
+          "label": "方法技巧"
+        },
+        {
+          "value": "modelRule",
+          "label": "模型规则"
+        },
+        {
+          "value": "summary",
+          "label": "归纳总结"
+        }
+      ]
+    },
+    {
+      "value": "comment",
+      "label": "评注",
+      "description": "面向老师或学生写下的解释、讲评、提醒、错因、反思、补充。",
+      "subKinds": [
+        {
+          "value": "teacherComment",
+          "label": "教师讲评"
+        },
+        {
+          "value": "studentNote",
+          "label": "学生笔记"
+        },
+        {
+          "value": "mistakeReason",
+          "label": "错因分析"
+        },
+        {
+          "value": "reflection",
+          "label": "反思"
+        },
+        {
+          "value": "reminder",
+          "label": "提醒"
+        },
+        {
+          "value": "questionNote",
+          "label": "疑问"
+        },
+        {
+          "value": "blackboard",
+          "label": "板书"
+        },
+        {
+          "value": "supplement",
+          "label": "补充材料"
+        }
+      ]
+    }
+  ],
+  "rolesByKind": {
+    "question": [
+      {
+        "value": "stem",
+        "label": "题干",
+        "required": true
+      },
+      {
+        "value": "answer",
+        "label": "答案",
+        "required": false
+      },
+      {
+        "value": "options",
+        "label": "选项",
+        "required": false
+      },
+      {
+        "value": "condition",
+        "label": "条件",
+        "required": false
+      },
+      {
+        "value": "figure",
+        "label": "图形",
+        "required": false
+      },
+      {
+        "value": "keyStep",
+        "label": "关键步骤",
+        "required": false
+      },
+      {
+        "value": "remark",
+        "label": "补充",
+        "required": false
+      }
+    ],
+    "knowledge": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "comment": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ]
+  },
+  "featureGroups": [
+    {
+      "key": "source",
+      "label": "来源",
+      "section": "basic",
+      "multi": false,
+      "values": [
+        {
+          "value": "textbook",
+          "label": "教材"
+        },
+        {
+          "value": "exerciseBook",
+          "label": "教辅"
+        },
+        {
+          "value": "exam",
+          "label": "真题/模拟题"
+        },
+        {
+          "value": "teacherHandout",
+          "label": "教师讲义"
+        },
+        {
+          "value": "studentNote",
+          "label": "学生笔记"
+        },
+        {
+          "value": "videoCourse",
+          "label": "视频课程"
+        },
+        {
+          "value": "other",
+          "label": "其它"
+        }
+      ],
+      "inputMode": "dropdown"
+    },
+    {
+      "key": "textbookSection",
+      "label": "课本章节",
+      "section": "basic",
+      "multi": true,
+      "values": [
+        {
+          "value": "sets",
+          "label": "集合"
+        },
+        {
+          "value": "function",
+          "label": "函数"
+        },
+        {
+          "value": "trigonometry",
+          "label": "三角函数"
+        },
+        {
+          "value": "sequence",
+          "label": "数列"
+        },
+        {
+          "value": "inequality",
+          "label": "不等式"
+        },
+        {
+          "value": "derivative",
+          "label": "导数"
+        },
+        {
+          "value": "solidGeometry",
+          "label": "立体几何"
+        },
+        {
+          "value": "analyticGeometry",
+          "label": "解析几何"
+        },
+        {
+          "value": "conic",
+          "label": "圆锥曲线"
+        },
+        {
+          "value": "probabilityStatistics",
+          "label": "概率统计"
+        }
+      ]
+    },
+    {
+      "key": "knowledgePoint",
+      "label": "知识点",
+      "section": "basic",
+      "multi": true,
+      "inputMode": "manual",
+      "values": []
+    },
+    {
+      "key": "type",
+      "label": "题型",
+      "section": "basic",
+      "multi": true,
+      "values": [
+        {
+          "value": "singleChoice",
+          "label": "单选"
+        },
+        {
+          "value": "multipleChoice",
+          "label": "多选"
+        },
+        {
+          "value": "blank",
+          "label": "填空"
+        },
+        {
+          "value": "solution",
+          "label": "解答"
+        },
+        {
+          "value": "proof",
+          "label": "证明"
+        },
+        {
+          "value": "other",
+          "label": "其它"
+        }
+      ]
+    },
+    {
+      "key": "difficulty",
+      "label": "难度",
+      "section": "basic",
+      "multi": true,
+      "values": [
+        {
+          "value": "basic",
+          "label": "基础"
+        },
+        {
+          "value": "medium",
+          "label": "中档"
+        },
+        {
+          "value": "advanced",
+          "label": "拔高"
+        },
+        {
+          "value": "final",
+          "label": "压轴"
+        },
+        {
+          "value": "errorProne",
+          "label": "易错"
+        }
+      ]
+    },
+    {
+      "key": "keyword",
+      "label": "关键词",
+      "section": "keyword",
+      "multi": true,
+      "inputMode": "manual",
+      "values": []
+    }
+  ],
+  "relationTypes": [
+    {
+      "value": "variantOf",
+      "label": "变式自"
+    },
+    {
+      "value": "sameModelAs",
+      "label": "同模型"
+    },
+    {
+      "value": "usesMethod",
+      "label": "使用方法"
+    },
+    {
+      "value": "explains",
+      "label": "解释"
+    },
+    {
+      "value": "confusableWith",
+      "label": "易混淆"
+    },
+    {
+      "value": "requiresKnowledge",
+      "label": "依赖知识点"
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "math-experimental-entity-min-a-object",
+      "type": "minAObjectCount",
+      "level": "error",
+      "min": 1,
+      "message": "数学 Entity 至少需要包含一个 A 标记。"
+    },
+    {
+      "id": "math-experimental-question-required-stem",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "question",
+      "role": "stem",
+      "message": "题目必须包含题干。"
+    }
+  ],
+  "uiHints": {
+    "defaultKind": "question",
+    "defaultLabel": "数学Label",
+    "kindDisplayOrder": [
+      "question",
+      "knowledge",
+      "comment"
+    ],
+    "featureGroupDisplayOrder": [
+      "source",
+      "textbookSection",
+      "knowledgePoint",
+      "type",
+      "difficulty",
+      "keyword"
+    ],
+    "primaryFeatureGroups": [
+      "source",
+      "textbookSection",
+      "knowledgePoint",
+      "type",
+      "difficulty"
+    ],
+    "defaultSubKindsByKind": {
+      "question": "default"
+    }
+  }
+}

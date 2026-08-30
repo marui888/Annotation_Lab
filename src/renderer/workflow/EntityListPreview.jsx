@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { validateDomainEntity } from '../domain/domainSchemas'
+import { DOMAIN_SCHEMAS, validateDomainEntity } from '../domain/domainSchemas'
 import EntityListView from './EntityListView'
 import EntityRawPreview from './EntityRawPreview'
 import './EntityListPreview.css'
@@ -22,10 +22,11 @@ export default function EntityListPreview({
   previewBackgroundColor = '#ffffff',
   readOnly = true,
   selectedCardIds = [],
+  subjectSchemas = DOMAIN_SCHEMAS,
 }) {
   const [internalViewTab, setInternalViewTab] = useState('list')
   const viewTab = activeView || internalViewTab
-  const validation = entity ? validateDomainEntity(entity) : null
+  const validation = entity ? validateDomainEntity(entity, subjectSchemas) : null
   const setViewTab = (nextViewTab) => {
     if (!activeView) setInternalViewTab(nextViewTab)
     onActiveViewChange?.(nextViewTab)
@@ -66,8 +67,10 @@ export default function EntityListPreview({
           <EntityListView
             annotations={annotations}
             entity={entity}
+            onNodeContextMenu={onNodeContextMenu}
             onSelectCards={onSelectCards}
             selectedCardIds={selectedCardIds}
+            subjectSchemas={subjectSchemas}
           />
         ) : (
           <EntityRawPreview

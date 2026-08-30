@@ -24,12 +24,14 @@ export function createVideoSource(fileInfo) {
 }
 
 export function createVideoFrame(source, frameInfo = {}) {
+  const timeStamp = Number(frameInfo.timeStamp ?? frameInfo.time ?? 0)
   return {
     id: frameInfo.id || createId('frame'),
     sourceId: source.id,
     kind: 'video-frame',
+    timeStamp: Number.isFinite(timeStamp) ? timeStamp : 0,
     locator: {
-      time: frameInfo.time ?? 0,
+      time: Number.isFinite(timeStamp) ? timeStamp : 0,
     },
     meta: {
       width: frameInfo.width ?? source.meta?.width ?? null,

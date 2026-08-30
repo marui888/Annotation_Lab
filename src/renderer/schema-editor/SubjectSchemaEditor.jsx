@@ -1,18 +1,29 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './SubjectSchemaEditor.css'
 import { createEmptySubjectSchema, validateSubjectSchema } from './subjectSchemaValidator'
 
 const STRUCTURE_NODES = [
   { id: 'basic', label: 'Basic', icon: 'fa-solid fa-circle-info' },
   { id: 'kinds', label: 'Entity Kinds', icon: 'fa-solid fa-shapes' },
-  { id: 'roles', label: 'Roles By Kind', icon: 'fa-solid fa-diagram-project' },
   { id: 'features', label: 'Feature Groups', icon: 'fa-solid fa-tags' },
   { id: 'relations', label: 'Relation Types', icon: 'fa-solid fa-link' },
   { id: 'rules', label: 'Validation Rules', icon: 'fa-solid fa-list-check' },
   { id: 'json', label: 'Raw JSON', icon: 'fa-solid fa-code' },
 ]
 
-const toPrettyJson = (value) => JSON.stringify(value, null, 2)
+const createUiId = (prefix = 'ui') => `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+
+function stripSchemaUiState(value) {
+  if (Array.isArray(value)) return value.map((item) => stripSchemaUiState(item))
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !key.startsWith('_ui'))
+      .map(([key, item]) => [key, stripSchemaUiState(item)])
+  )
+}
+
+const toPrettyJson = (value) => JSON.stringify(stripSchemaUiState(value), null, 2)
 
 function getFileName(filePath = '') {
   return String(filePath || '').split(/[\\/]/).pop() || 'Untitled'
@@ -33,11 +44,21 @@ function moveArrayItem(items, index, delta) {
   return next
 }
 
-function TextField({ label, onChange, value }) {
+function getMovedIndex(index, delta, length) {
+  const nextIndex = index + delta
+  if (index < 0 || nextIndex < 0 || nextIndex >= length) return index
+  return nextIndex
+}
+
+function getDefaultSubKindsByKind(schema) {
+  return schema.uiHints?.defaultSubKindsByKind || {}
+}
+
+function TextField({ inputRef, label, onChange, value }) {
   return (
     <label className="schema-field">
       <span>{label}</span>
-      <input onChange={(event) => onChange(event.target.value)} value={value || ''} />
+      <input onChange={(event) => onChange(event.target.value)} ref={inputRef} value={value || ''} />
     </label>
   )
 }
@@ -51,6 +72,60 @@ function TextAreaField({ label, onChange, value }) {
   )
 }
 
+function SchemaItemList({
+  actions = [],
+  emptyText = 'No item.',
+  getDescription,
+  getLabel,
+  getValue,
+  items = [],
+  onSelect,
+  selectedValue,
+  title,
+}) {
+  return (
+    <div className="schema-list-box">
+      {title ? <div className="schema-list-title">{title}</div> : null}
+      {items.length === 0 ? (
+        <div className="schema-empty-state">{emptyText}</div>
+      ) : (
+        <select
+          className="schema-native-list"
+          onChange={(event) => onSelect?.(event.target.value)}
+          size={Math.max(4, Math.min(14, items.length))}
+          value={selectedValue || ''}
+        >
+          {items.map((item, index) => {
+            const value = getValue(item, index)
+            const label = getLabel(item, index)
+            const description = getDescription?.(item, index)
+            return (
+              <option key={`${value || 'item'}-${index}`} title={description || label} value={value}>
+                {description ? `${label}  -  ${description}` : label}
+              </option>
+            )
+          })}
+        </select>
+      )}
+      {actions.length > 0 ? (
+        <div className="schema-list-actions">
+          {actions.map((action) => (
+            <button
+              className={action.danger ? 'danger' : ''}
+              disabled={action.disabled}
+              key={action.label}
+              onClick={action.onClick}
+              type="button"
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function SubjectSchemaEditor() {
   const [schemaFiles, setSchemaFiles] = useState([])
   const [schemaFolder, setSchemaFolder] = useState('')
@@ -58,19 +133,30 @@ export default function SubjectSchemaEditor() {
   const [filePath, setFilePath] = useState('')
   const [activeNode, setActiveNode] = useState('basic')
   const [selectedKind, setSelectedKind] = useState('')
+  const [kindChildTab, setKindChildTab] = useState('subKinds')
+  const [selectedSchemaFilePath, setSelectedSchemaFilePath] = useState('')
+  const [selectedSubKindIndex, setSelectedSubKindIndex] = useState(0)
+  const [selectedRoleIndex, setSelectedRoleIndex] = useState(0)
   const [selectedFeatureGroup, setSelectedFeatureGroup] = useState('')
+  const [selectedFeatureValueIndex, setSelectedFeatureValueIndex] = useState(0)
+  const [selectedRelationIndex, setSelectedRelationIndex] = useState(0)
   const [selectedRule, setSelectedRule] = useState('')
   const [dirty, setDirty] = useState(false)
   const [status, setStatus] = useState('Ready')
   const [rawJsonDraft, setRawJsonDraft] = useState('')
+  const pendingFocusRef = useRef('')
 
   const validation = useMemo(() => validateSubjectSchema(schema), [schema])
   const selectedKindData = schema.entityKinds.find((kind) => kind.value === selectedKind) || schema.entityKinds[0] || null
   const selectedKindValue = selectedKindData?.value || ''
+  const selectedSubKindData = (selectedKindData?.subKinds || [])[selectedSubKindIndex] || null
   const selectedFeatureGroupData = schema.featureGroups.find((group) => group.key === selectedFeatureGroup) || schema.featureGroups[0] || null
   const selectedFeatureGroupKey = selectedFeatureGroupData?.key || ''
+  const selectedFeatureValueData = (selectedFeatureGroupData?.values || [])[selectedFeatureValueIndex] || null
+  const selectedRelationData = (schema.relationTypes || [])[selectedRelationIndex] || null
   const selectedRuleData = schema.validationRules.find((rule) => rule.id === selectedRule) || schema.validationRules[0] || null
   const selectedRuleId = selectedRuleData?.id || ''
+  const selectedKindDefaultSubKind = getDefaultSubKindsByKind(schema)[selectedKindValue] || ''
 
   const markSchemaChanged = (updater) => {
     setSchema((current) => {
@@ -78,6 +164,15 @@ export default function SubjectSchemaEditor() {
       return next
     })
     setDirty(true)
+  }
+
+  const focusPendingInput = (focusKey) => (element) => {
+    if (!element || pendingFocusRef.current !== focusKey) return
+    pendingFocusRef.current = ''
+    window.requestAnimationFrame(() => {
+      element.focus()
+      element.select?.()
+    })
   }
 
   const loadSchemaList = async () => {
@@ -105,6 +200,45 @@ export default function SubjectSchemaEditor() {
       canceled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (schemaFiles.length === 0) {
+      setSelectedSchemaFilePath('')
+      return
+    }
+    if (selectedSchemaFilePath && schemaFiles.some((file) => file.filePath === selectedSchemaFilePath)) return
+    setSelectedSchemaFilePath(filePath && schemaFiles.some((file) => file.filePath === filePath) ? filePath : schemaFiles[0].filePath)
+  }, [filePath, schemaFiles, selectedSchemaFilePath])
+
+  useEffect(() => {
+    setSelectedSubKindIndex(0)
+    setSelectedRoleIndex(0)
+  }, [selectedKindValue])
+
+  useEffect(() => {
+    setSelectedFeatureValueIndex(0)
+  }, [selectedFeatureGroupKey])
+
+  useEffect(() => {
+    const subKindCount = selectedKindData?.subKinds?.length || 0
+    if (selectedSubKindIndex >= subKindCount) setSelectedSubKindIndex(Math.max(0, subKindCount - 1))
+    const roleCount = schema.rolesByKind[selectedKindValue]?.length || 0
+    if (selectedRoleIndex >= roleCount) setSelectedRoleIndex(Math.max(0, roleCount - 1))
+    const featureValueCount = selectedFeatureGroupData?.values?.length || 0
+    if (selectedFeatureValueIndex >= featureValueCount) setSelectedFeatureValueIndex(Math.max(0, featureValueCount - 1))
+    const relationCount = schema.relationTypes?.length || 0
+    if (selectedRelationIndex >= relationCount) setSelectedRelationIndex(Math.max(0, relationCount - 1))
+  }, [
+    schema.relationTypes,
+    schema.rolesByKind,
+    selectedFeatureGroupData,
+    selectedFeatureValueIndex,
+    selectedKindData,
+    selectedKindValue,
+    selectedRelationIndex,
+    selectedRoleIndex,
+    selectedSubKindIndex,
+  ])
 
   const setLoadedSchema = (result) => {
     setSchema(result.data || createEmptySubjectSchema())
@@ -147,9 +281,10 @@ export default function SubjectSchemaEditor() {
   }
 
   const saveSchema = async () => {
+    const data = stripSchemaUiState(schema)
     const result = filePath
-      ? await window.labApi?.saveSubjectSchema?.({ filePath, data: schema })
-      : await window.labApi?.saveSubjectSchemaAs?.({ data: schema, suggestedName: schema.subjectId })
+      ? await window.labApi?.saveSubjectSchema?.({ filePath, data })
+      : await window.labApi?.saveSubjectSchemaAs?.({ data, suggestedName: schema.subjectId })
     if (!result?.ok) {
       if (!result?.canceled) setStatus(`Save failed: ${result?.reason || 'unknown error'}`)
       return false
@@ -162,7 +297,8 @@ export default function SubjectSchemaEditor() {
   }
 
   const saveSchemaAs = async () => {
-    const result = await window.labApi?.saveSubjectSchemaAs?.({ data: schema, suggestedName: schema.subjectId })
+    const data = stripSchemaUiState(schema)
+    const result = await window.labApi?.saveSubjectSchemaAs?.({ data, suggestedName: schema.subjectId })
     if (!result?.ok) {
       if (!result?.canceled) setStatus(`Save As failed: ${result?.reason || 'unknown error'}`)
       return false
@@ -180,11 +316,46 @@ export default function SubjectSchemaEditor() {
     await openSchemaFile(filePath)
   }
 
+  const copySchemaFile = async (targetFilePath) => {
+    if (!targetFilePath) return
+    const result = await window.labApi?.copySubjectSchema?.(targetFilePath)
+    if (!result?.ok) {
+      setStatus(`Copy failed: ${result?.reason || 'unknown error'}`)
+      return
+    }
+    await loadSchemaList()
+    setLoadedSchema(result)
+  }
+
+  const deleteSchemaFile = async (targetFilePath, targetFileName) => {
+    if (!targetFilePath) return
+    if (!window.confirm(`Delete schema file?\n\n${targetFileName || getFileName(targetFilePath)}`)) return
+    const result = await window.labApi?.deleteSubjectSchema?.(targetFilePath)
+    if (!result?.ok) {
+      setStatus(`Delete failed: ${result?.reason || 'unknown error'}`)
+      return
+    }
+    await loadSchemaList()
+    if (targetFilePath === filePath) {
+      const nextSchema = createEmptySubjectSchema()
+      setSchema(nextSchema)
+      setRawJsonDraft(toPrettyJson(nextSchema))
+      setFilePath('')
+      setDirty(false)
+      setStatus(`Deleted ${result.fileName || targetFileName || getFileName(targetFilePath)}`)
+      setSelectedKind('')
+      setSelectedFeatureGroup('')
+      setSelectedRule('')
+      return
+    }
+    setStatus(`Deleted ${result.fileName || targetFileName || getFileName(targetFilePath)}`)
+  }
+
   const addKind = () => {
     const value = `kind_${schema.entityKinds.length + 1}`
     markSchemaChanged((current) => ({
       ...current,
-      entityKinds: [...current.entityKinds, { value, label: 'New Kind', description: '' }],
+      entityKinds: [...current.entityKinds, { value, label: 'New Kind', description: '', subKinds: [] }],
       rolesByKind: {
         ...current.rolesByKind,
         [value]: [],
@@ -197,14 +368,31 @@ export default function SubjectSchemaEditor() {
     if (!kindValue || !window.confirm(`Delete kind "${kindValue}"?`)) return
     markSchemaChanged((current) => {
       const nextRolesByKind = { ...current.rolesByKind }
+      const nextDefaultSubKindsByKind = { ...getDefaultSubKindsByKind(current) }
       delete nextRolesByKind[kindValue]
+      delete nextDefaultSubKindsByKind[kindValue]
       return {
         ...current,
         entityKinds: current.entityKinds.filter((kind) => kind.value !== kindValue),
         rolesByKind: nextRolesByKind,
+        uiHints: {
+          ...(current.uiHints || {}),
+          defaultSubKindsByKind: nextDefaultSubKindsByKind,
+        },
       }
     })
     setSelectedKind('')
+  }
+
+  const moveKind = (delta) => {
+    const index = schema.entityKinds.indexOf(selectedKindData)
+    if (index < 0) return
+    const nextIndex = getMovedIndex(index, delta, schema.entityKinds.length)
+    markSchemaChanged((current) => ({
+      ...current,
+      entityKinds: moveArrayItem(current.entityKinds, index, delta),
+    }))
+    setSelectedKind(schema.entityKinds[nextIndex]?.value || selectedKindValue)
   }
 
   const updateKind = (index, patch) => {
@@ -212,32 +400,108 @@ export default function SubjectSchemaEditor() {
       const oldKind = current.entityKinds[index]
       const nextKinds = updateArrayItem(current.entityKinds, index, patch)
       const nextRolesByKind = { ...current.rolesByKind }
+      const nextDefaultSubKindsByKind = { ...getDefaultSubKindsByKind(current) }
       if (patch.value && oldKind?.value && patch.value !== oldKind.value) {
         nextRolesByKind[patch.value] = nextRolesByKind[oldKind.value] || []
         delete nextRolesByKind[oldKind.value]
+        if (Object.prototype.hasOwnProperty.call(nextDefaultSubKindsByKind, oldKind.value)) {
+          nextDefaultSubKindsByKind[patch.value] = nextDefaultSubKindsByKind[oldKind.value]
+          delete nextDefaultSubKindsByKind[oldKind.value]
+        }
         setSelectedKind(patch.value)
       }
       return {
         ...current,
         entityKinds: nextKinds,
         rolesByKind: nextRolesByKind,
+        uiHints: {
+          ...(current.uiHints || {}),
+          defaultSubKindsByKind: nextDefaultSubKindsByKind,
+        },
       }
     })
+  }
+
+  const updateDefaultSubKind = (kindValue, subKindValue) => {
+    if (!kindValue) return
+    markSchemaChanged((current) => {
+      const nextDefaultSubKindsByKind = { ...getDefaultSubKindsByKind(current) }
+      if (subKindValue) {
+        nextDefaultSubKindsByKind[kindValue] = subKindValue
+      } else {
+        delete nextDefaultSubKindsByKind[kindValue]
+      }
+      return {
+        ...current,
+        uiHints: {
+          ...(current.uiHints || {}),
+          defaultSubKindsByKind: nextDefaultSubKindsByKind,
+        },
+      }
+    })
+  }
+
+  const addSubKind = () => {
+    const kindIndex = schema.entityKinds.indexOf(selectedKindData)
+    if (kindIndex < 0) return
+    const value = `subKind_${(selectedKindData.subKinds || []).length + 1}`
+    pendingFocusRef.current = `subKind:${selectedKindData.value}:${value}`
+    updateKind(kindIndex, {
+      subKinds: [
+        ...(selectedKindData.subKinds || []),
+        { _uiId: createUiId('subKind'), value, label: 'New SubKind' },
+      ],
+    })
+    setSelectedSubKindIndex((selectedKindData.subKinds || []).length)
+  }
+
+  const updateSubKind = (subKindIndex, patch) => {
+    const kindIndex = schema.entityKinds.indexOf(selectedKindData)
+    if (kindIndex < 0) return
+    updateKind(kindIndex, {
+      subKinds: updateArrayItem(selectedKindData.subKinds || [], subKindIndex, patch),
+    })
+  }
+
+  const moveSubKind = (subKindIndex, delta) => {
+    const kindIndex = schema.entityKinds.indexOf(selectedKindData)
+    if (kindIndex < 0) return
+    const subKinds = selectedKindData.subKinds || []
+    updateKind(kindIndex, {
+      subKinds: moveArrayItem(subKinds, subKindIndex, delta),
+    })
+    setSelectedSubKindIndex(getMovedIndex(subKindIndex, delta, subKinds.length))
+  }
+
+  const deleteSubKind = (subKindIndex) => {
+    const kindIndex = schema.entityKinds.indexOf(selectedKindData)
+    if (kindIndex < 0 || !window.confirm('Delete this subkind?')) return
+    const deletedSubKind = (selectedKindData.subKinds || [])[subKindIndex]
+    const nextSubKinds = (selectedKindData.subKinds || []).filter((_subKind, index) => index !== subKindIndex)
+    updateKind(kindIndex, {
+      subKinds: nextSubKinds,
+    })
+    if (deletedSubKind?.value && selectedKindDefaultSubKind === deletedSubKind.value) {
+      updateDefaultSubKind(selectedKindData.value, '')
+    }
+    setSelectedSubKindIndex(Math.max(0, Math.min(subKindIndex, nextSubKinds.length - 1)))
   }
 
   const addRole = () => {
     if (!selectedKindValue) return
     const value = `role_${(schema.rolesByKind[selectedKindValue] || []).length + 1}`
+    pendingFocusRef.current = `role:${selectedKindValue}:${value}`
     markSchemaChanged((current) => ({
       ...current,
       rolesByKind: {
         ...current.rolesByKind,
         [selectedKindValue]: [
           ...(current.rolesByKind[selectedKindValue] || []),
-          { value, label: 'New Role', required: false },
+          { _uiId: createUiId('role'), value, label: 'New Role', required: false },
         ],
       },
     }))
+    setSelectedRoleIndex(schema.rolesByKind[selectedKindValue]?.length || 0)
   }
 
   const updateRole = (index, patch) => {
@@ -253,6 +517,7 @@ export default function SubjectSchemaEditor() {
 
   const deleteRole = (index) => {
     if (!selectedKindValue || !window.confirm('Delete this role?')) return
+    const nextLength = Math.max(0, (schema.rolesByKind[selectedKindValue] || []).length - 1)
     markSchemaChanged((current) => ({
       ...current,
       rolesByKind: {
@@ -260,15 +525,40 @@ export default function SubjectSchemaEditor() {
         [selectedKindValue]: (current.rolesByKind[selectedKindValue] || []).filter((_role, roleIndex) => roleIndex !== index),
       },
     }))
+    setSelectedRoleIndex(Math.max(0, Math.min(index, nextLength - 1)))
+  }
+
+  const moveRole = (index, delta) => {
+    if (!selectedKindValue) return
+    const roles = schema.rolesByKind[selectedKindValue] || []
+    markSchemaChanged((current) => ({
+      ...current,
+      rolesByKind: {
+        ...current.rolesByKind,
+        [selectedKindValue]: moveArrayItem(current.rolesByKind[selectedKindValue] || [], index, delta),
+      },
+    }))
+    setSelectedRoleIndex(getMovedIndex(index, delta, roles.length))
   }
 
   const addFeatureGroup = () => {
     const key = `featureGroup_${schema.featureGroups.length + 1}`
+    const uiId = createUiId('featureGroup')
+    pendingFocusRef.current = `featureGroup:${uiId}`
     markSchemaChanged((current) => ({
       ...current,
-      featureGroups: [...current.featureGroups, { key, label: 'New Feature Group', multi: true, values: [] }],
+      featureGroups: [...current.featureGroups, { _uiId: uiId, key, label: 'New Feature Group', multi: true, values: [] }],
     }))
     setSelectedFeatureGroup(key)
+  }
+
+  const moveFeatureGroup = (index, delta) => {
+    const nextIndex = getMovedIndex(index, delta, schema.featureGroups.length)
+    markSchemaChanged((current) => ({
+      ...current,
+      featureGroups: moveArrayItem(current.featureGroups, index, delta),
+    }))
+    setSelectedFeatureGroup(schema.featureGroups[nextIndex]?.key || selectedFeatureGroupKey)
   }
 
   const updateFeatureGroup = (index, patch) => {
@@ -293,14 +583,17 @@ export default function SubjectSchemaEditor() {
     const groupIndex = schema.featureGroups.findIndex((group) => group.key === selectedFeatureGroupKey)
     if (groupIndex < 0) return
     const value = `value_${(selectedFeatureGroupData.values || []).length + 1}`
+    const uiId = createUiId('featureValue')
+    pendingFocusRef.current = `featureValue:${uiId}`
     markSchemaChanged((current) => ({
       ...current,
       featureGroups: current.featureGroups.map((group, index) => (
         index === groupIndex
-          ? { ...group, values: [...(group.values || []), { value, label: 'New Value' }] }
+          ? { ...group, values: [...(group.values || []), { _uiId: uiId, value, label: 'New Value' }] }
           : group
       )),
     }))
+    setSelectedFeatureValueIndex(selectedFeatureGroupData.values?.length || 0)
   }
 
   const updateFeatureValue = (valueIndex, patch) => {
@@ -320,6 +613,7 @@ export default function SubjectSchemaEditor() {
     if (!window.confirm('Delete this feature value?')) return
     const groupIndex = schema.featureGroups.findIndex((group) => group.key === selectedFeatureGroupKey)
     if (groupIndex < 0) return
+    const nextLength = Math.max(0, (selectedFeatureGroupData.values || []).length - 1)
     markSchemaChanged((current) => ({
       ...current,
       featureGroups: current.featureGroups.map((group, index) => (
@@ -328,16 +622,35 @@ export default function SubjectSchemaEditor() {
           : group
       )),
     }))
+    setSelectedFeatureValueIndex(Math.max(0, Math.min(valueIndex, nextLength - 1)))
+  }
+
+  const moveFeatureValue = (valueIndex, delta) => {
+    const groupIndex = schema.featureGroups.findIndex((group) => group.key === selectedFeatureGroupKey)
+    if (groupIndex < 0) return
+    const values = selectedFeatureGroupData.values || []
+    markSchemaChanged((current) => ({
+      ...current,
+      featureGroups: current.featureGroups.map((group, index) => (
+        index === groupIndex
+          ? { ...group, values: moveArrayItem(group.values || [], valueIndex, delta) }
+          : group
+      )),
+    }))
+    setSelectedFeatureValueIndex(getMovedIndex(valueIndex, delta, values.length))
   }
 
   const addRelationType = () => {
+    const uiId = createUiId('relation')
+    pendingFocusRef.current = `relation:${uiId}`
     markSchemaChanged((current) => ({
       ...current,
       relationTypes: [
         ...(current.relationTypes || []),
-        { value: `relation_${(current.relationTypes || []).length + 1}`, label: 'New Relation' },
+        { _uiId: uiId, value: `relation_${(current.relationTypes || []).length + 1}`, label: 'New Relation' },
       ],
     }))
+    setSelectedRelationIndex(schema.relationTypes?.length || 0)
   }
 
   const updateRelationType = (index, patch) => {
@@ -349,10 +662,21 @@ export default function SubjectSchemaEditor() {
 
   const deleteRelationType = (index) => {
     if (!window.confirm('Delete this relation type?')) return
+    const nextLength = Math.max(0, (schema.relationTypes || []).length - 1)
     markSchemaChanged((current) => ({
       ...current,
       relationTypes: (current.relationTypes || []).filter((_item, itemIndex) => itemIndex !== index),
     }))
+    setSelectedRelationIndex(Math.max(0, Math.min(index, nextLength - 1)))
+  }
+
+  const moveRelationType = (index, delta) => {
+    const relationTypes = schema.relationTypes || []
+    markSchemaChanged((current) => ({
+      ...current,
+      relationTypes: moveArrayItem(current.relationTypes || [], index, delta),
+    }))
+    setSelectedRelationIndex(getMovedIndex(index, delta, relationTypes.length))
   }
 
   const addRule = () => {
@@ -365,6 +689,15 @@ export default function SubjectSchemaEditor() {
       ],
     }))
     setSelectedRule(id)
+  }
+
+  const moveRule = (index, delta) => {
+    const nextIndex = getMovedIndex(index, delta, schema.validationRules.length)
+    markSchemaChanged((current) => ({
+      ...current,
+      validationRules: moveArrayItem(current.validationRules, index, delta),
+    }))
+    setSelectedRule(schema.validationRules[nextIndex]?.id || selectedRuleId)
   }
 
   const updateRule = (index, patch) => {
@@ -407,23 +740,115 @@ export default function SubjectSchemaEditor() {
     </div>
   )
 
+  const renderCurrentKindRolesPanel = () => {
+    const roles = schema.rolesByKind[selectedKindValue] || []
+    const selectedRoleData = roles[selectedRoleIndex] || null
+    return (
+      <div className="schema-kind-child-panel">
+        <SchemaItemList
+          actions={[
+            { label: 'Add', onClick: addRole, disabled: !selectedKindValue },
+            { label: 'Delete', onClick: () => deleteRole(selectedRoleIndex), disabled: !selectedRoleData, danger: true },
+            { label: 'Up', onClick: () => moveRole(selectedRoleIndex, -1), disabled: !selectedRoleData || selectedRoleIndex <= 0 },
+            { label: 'Down', onClick: () => moveRole(selectedRoleIndex, 1), disabled: !selectedRoleData || selectedRoleIndex >= roles.length - 1 },
+          ]}
+          emptyText="No role."
+          getDescription={(role) => role.value}
+          getLabel={(role, index) => `${index + 1}. ${role.label || role.value || 'Untitled Role'}`}
+          getValue={(_role, index) => String(index)}
+          items={roles}
+          onSelect={(value) => setSelectedRoleIndex(Number(value))}
+          selectedValue={String(selectedRoleIndex)}
+          title="Roles"
+        />
+        {selectedRoleData ? (
+          <div className="schema-form compact schema-inline-editor">
+            <TextField
+              inputRef={focusPendingInput(`role:${selectedKindValue}:${selectedRoleData.value}`)}
+              label="value"
+              onChange={(value) => updateRole(selectedRoleIndex, { value })}
+              value={selectedRoleData.value}
+            />
+            <TextField label="label" onChange={(value) => updateRole(selectedRoleIndex, { label: value })} value={selectedRoleData.label} />
+            <label className="schema-check">
+              <input checked={Boolean(selectedRoleData.required)} onChange={(event) => updateRole(selectedRoleIndex, { required: event.target.checked })} type="checkbox" />
+              Required
+            </label>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderCurrentKindSubKindsPanel = () => (
+    <div className="schema-kind-child-panel">
+      <label className="schema-field schema-default-subkind-field">
+        <span>Default SubKind</span>
+        <select
+          disabled={(selectedKindData.subKinds || []).length === 0}
+          onChange={(event) => updateDefaultSubKind(selectedKindData.value, event.target.value)}
+          value={selectedKindDefaultSubKind}
+        >
+          <option value="">none</option>
+          {selectedKindDefaultSubKind && !(selectedKindData.subKinds || []).some((subKind) => subKind.value === selectedKindDefaultSubKind) ? (
+            <option value={selectedKindDefaultSubKind}>{selectedKindDefaultSubKind} (missing)</option>
+          ) : null}
+          {(selectedKindData.subKinds || []).map((subKind, index) => (
+            <option key={`${subKind.value || 'subKind'}-${index}`} value={subKind.value || ''}>
+              {subKind.label || subKind.value || `SubKind ${index + 1}`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <SchemaItemList
+        actions={[
+          { label: 'Add', onClick: addSubKind },
+          { label: 'Delete', onClick: () => deleteSubKind(selectedSubKindIndex), disabled: !selectedSubKindData, danger: true },
+          { label: 'Up', onClick: () => moveSubKind(selectedSubKindIndex, -1), disabled: !selectedSubKindData || selectedSubKindIndex <= 0 },
+          { label: 'Down', onClick: () => moveSubKind(selectedSubKindIndex, 1), disabled: !selectedSubKindData || selectedSubKindIndex >= (selectedKindData.subKinds || []).length - 1 },
+        ]}
+        emptyText="No subkind."
+        getDescription={(subKind) => subKind.value}
+        getLabel={(subKind, index) => `${index + 1}. ${subKind.label || subKind.value || 'Untitled SubKind'}`}
+        getValue={(_subKind, index) => String(index)}
+        items={selectedKindData.subKinds || []}
+        onSelect={(value) => setSelectedSubKindIndex(Number(value))}
+        selectedValue={String(selectedSubKindIndex)}
+        title="SubKinds"
+      />
+      {selectedSubKindData ? (
+        <div className="schema-form compact schema-inline-editor">
+          <TextField
+            inputRef={focusPendingInput(`subKind:${selectedKindData.value}:${selectedSubKindData.value}`)}
+            label="value"
+            onChange={(value) => updateSubKind(selectedSubKindIndex, { value })}
+            value={selectedSubKindData.value}
+          />
+          <TextField label="label" onChange={(value) => updateSubKind(selectedSubKindIndex, { label: value })} value={selectedSubKindData.label} />
+        </div>
+      ) : null}
+    </div>
+  )
+
   const renderKindEditor = () => (
     <div className="schema-split-editor">
       <div className="schema-list-editor">
-        <div className="schema-editor-toolbar">
-          <button onClick={addKind} type="button">Add Kind</button>
-        </div>
-        {schema.entityKinds.map((kind, index) => (
-          <button
-            className={kind.value === selectedKindValue ? 'selected' : ''}
-            key={`${kind.value}-${index}`}
-            onClick={() => setSelectedKind(kind.value)}
-            type="button"
-          >
-            <strong>{kind.label || kind.value}</strong>
-            <small>{kind.value}</small>
-          </button>
-        ))}
+        <SchemaItemList
+          actions={[
+            { label: 'Add', onClick: addKind },
+            { label: 'Delete', onClick: () => deleteKind(selectedKindValue), disabled: !selectedKindValue, danger: true },
+            { label: 'Up', onClick: () => moveKind(-1), disabled: schema.entityKinds.indexOf(selectedKindData) <= 0 },
+            { label: 'Down', onClick: () => moveKind(1), disabled: schema.entityKinds.indexOf(selectedKindData) < 0 || schema.entityKinds.indexOf(selectedKindData) >= schema.entityKinds.length - 1 },
+          ]}
+          emptyText="No kind."
+          getDescription={(kind) => kind.value}
+          getLabel={(kind, index) => `${index + 1}. ${kind.label || kind.value || 'Untitled Kind'}`}
+          getValue={(kind) => kind.value}
+          items={schema.entityKinds}
+          onSelect={setSelectedKind}
+          selectedValue={selectedKindValue}
+          title="Kinds"
+        />
       </div>
       <div className="schema-form">
         {selectedKindData ? (
@@ -431,10 +856,12 @@ export default function SubjectSchemaEditor() {
             <TextField label="value" onChange={(value) => updateKind(schema.entityKinds.indexOf(selectedKindData), { value })} value={selectedKindData.value} />
             <TextField label="label" onChange={(value) => updateKind(schema.entityKinds.indexOf(selectedKindData), { label: value })} value={selectedKindData.label} />
             <TextAreaField label="description" onChange={(value) => updateKind(schema.entityKinds.indexOf(selectedKindData), { description: value })} value={selectedKindData.description} />
-            <div className="schema-editor-toolbar">
-              <button onClick={() => markSchemaChanged((current) => ({ ...current, entityKinds: moveArrayItem(current.entityKinds, schema.entityKinds.indexOf(selectedKindData), -1) }))} type="button">Up</button>
-              <button onClick={() => markSchemaChanged((current) => ({ ...current, entityKinds: moveArrayItem(current.entityKinds, schema.entityKinds.indexOf(selectedKindData), 1) }))} type="button">Down</button>
-              <button className="danger" onClick={() => deleteKind(selectedKindData.value)} type="button">Delete</button>
+            <div className="schema-kind-child-tabs">
+              <button className={kindChildTab === 'subKinds' ? 'active' : ''} onClick={() => setKindChildTab('subKinds')} type="button">SubKinds</button>
+              <button className={kindChildTab === 'roles' ? 'active' : ''} onClick={() => setKindChildTab('roles')} type="button">Roles</button>
+            </div>
+            <div className="schema-subkind-editor">
+              {kindChildTab === 'roles' ? renderCurrentKindRolesPanel() : renderCurrentKindSubKindsPanel()}
             </div>
           </>
         ) : <div className="schema-empty-state">No kind selected.</div>}
@@ -442,85 +869,92 @@ export default function SubjectSchemaEditor() {
     </div>
   )
 
-  const renderRolesEditor = () => {
-    const roles = schema.rolesByKind[selectedKindValue] || []
-    return (
-      <div className="schema-split-editor">
-        <div className="schema-list-editor">
-          {schema.entityKinds.map((kind) => (
-            <button
-              className={kind.value === selectedKindValue ? 'selected' : ''}
-              key={kind.value}
-              onClick={() => setSelectedKind(kind.value)}
-              type="button"
-            >
-              <strong>{kind.label || kind.value}</strong>
-              <small>{(schema.rolesByKind[kind.value] || []).length} roles</small>
-            </button>
-          ))}
-        </div>
-        <div className="schema-table-editor">
-          <div className="schema-editor-toolbar">
-            <strong>{selectedKindData?.label || selectedKindValue || 'No Kind'}</strong>
-            <button disabled={!selectedKindValue} onClick={addRole} type="button">Add Role</button>
-          </div>
-          {roles.map((role, index) => (
-            <div className="schema-table-row" key={`${role.value}-${index}`}>
-              <input onChange={(event) => updateRole(index, { value: event.target.value })} value={role.value || ''} />
-              <input onChange={(event) => updateRole(index, { label: event.target.value })} value={role.label || ''} />
-              <label className="schema-check">
-                <input checked={Boolean(role.required)} onChange={(event) => updateRole(index, { required: event.target.checked })} type="checkbox" />
-                Required
-              </label>
-              <button onClick={() => updateRole(index, roles[index - 1] ? roles[index - 1] : role)} type="button">Copy Prev</button>
-              <button className="danger" onClick={() => deleteRole(index)} type="button">Delete</button>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
   const renderFeaturesEditor = () => (
     <div className="schema-split-editor">
       <div className="schema-list-editor">
-        <div className="schema-editor-toolbar">
-          <button onClick={addFeatureGroup} type="button">Add Group</button>
-        </div>
-        {schema.featureGroups.map((group, index) => (
-          <button
-            className={group.key === selectedFeatureGroupKey ? 'selected' : ''}
-            key={`${group.key}-${index}`}
-            onClick={() => setSelectedFeatureGroup(group.key)}
-            type="button"
-          >
-            <strong>{group.label || group.key}</strong>
-            <small>{(group.values || []).length} values</small>
-          </button>
-        ))}
+        <SchemaItemList
+          actions={[
+            { label: 'Add', onClick: addFeatureGroup },
+            { label: 'Delete', onClick: () => deleteFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData)), disabled: !selectedFeatureGroupData, danger: true },
+            { label: 'Up', onClick: () => moveFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), -1), disabled: schema.featureGroups.indexOf(selectedFeatureGroupData) <= 0 },
+            { label: 'Down', onClick: () => moveFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), 1), disabled: schema.featureGroups.indexOf(selectedFeatureGroupData) < 0 || schema.featureGroups.indexOf(selectedFeatureGroupData) >= schema.featureGroups.length - 1 },
+          ]}
+          emptyText="No feature group."
+          getDescription={(group) => `${group.key} / ${(group.values || []).length} values`}
+          getLabel={(group, index) => `${index + 1}. ${group.label || group.key || 'Untitled Group'}`}
+          getValue={(group) => group.key}
+          items={schema.featureGroups}
+          onSelect={setSelectedFeatureGroup}
+          selectedValue={selectedFeatureGroupKey}
+          title="Feature Groups"
+        />
       </div>
       <div className="schema-table-editor">
         {selectedFeatureGroupData ? (
           <>
             <div className="schema-form compact">
-              <TextField label="key" onChange={(value) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { key: value })} value={selectedFeatureGroupData.key} />
+              <TextField
+                inputRef={focusPendingInput(`featureGroup:${selectedFeatureGroupData._uiId}`)}
+                label="key"
+                onChange={(value) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { key: value })}
+                value={selectedFeatureGroupData.key}
+              />
               <TextField label="label" onChange={(value) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { label: value })} value={selectedFeatureGroupData.label} />
               <label className="schema-check">
                 <input checked={Boolean(selectedFeatureGroupData.multi)} onChange={(event) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { multi: event.target.checked })} type="checkbox" />
                 Multi
               </label>
+              <label className="schema-field">
+                <span>section</span>
+                <select
+                  onChange={(event) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { section: event.target.value })}
+                  value={selectedFeatureGroupData.section || 'basic'}
+                >
+                  <option value="basic">basic</option>
+                  <option value="keyword">keyword</option>
+                  <option value="">none</option>
+                </select>
+              </label>
+              <label className="schema-field">
+                <span>inputMode</span>
+                <select
+                  onChange={(event) => updateFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData), { inputMode: event.target.value })}
+                  value={selectedFeatureGroupData.inputMode || 'select'}
+                >
+                  <option value="select">select</option>
+                  <option value="dropdown">dropdown</option>
+                  <option value="manual">manual</option>
+                  <option value="">none</option>
+                </select>
+              </label>
             </div>
-            <div className="schema-editor-toolbar">
-              <button onClick={addFeatureValue} type="button">Add Value</button>
-              <button className="danger" onClick={() => deleteFeatureGroup(schema.featureGroups.indexOf(selectedFeatureGroupData))} type="button">Delete Group</button>
-            </div>
-            {(selectedFeatureGroupData.values || []).map((value, index) => (
-              <div className="schema-table-row" key={`${value.value}-${index}`}>
-                <input onChange={(event) => updateFeatureValue(index, { value: event.target.value })} value={value.value || ''} />
-                <input onChange={(event) => updateFeatureValue(index, { label: event.target.value })} value={value.label || ''} />
-                <button className="danger" onClick={() => deleteFeatureValue(index)} type="button">Delete</button>
+            <SchemaItemList
+              actions={[
+                { label: 'Add', onClick: addFeatureValue },
+                { label: 'Delete', onClick: () => deleteFeatureValue(selectedFeatureValueIndex), disabled: !selectedFeatureValueData, danger: true },
+                { label: 'Up', onClick: () => moveFeatureValue(selectedFeatureValueIndex, -1), disabled: !selectedFeatureValueData || selectedFeatureValueIndex <= 0 },
+                { label: 'Down', onClick: () => moveFeatureValue(selectedFeatureValueIndex, 1), disabled: !selectedFeatureValueData || selectedFeatureValueIndex >= (selectedFeatureGroupData.values || []).length - 1 },
+              ]}
+              emptyText="No feature value."
+              getDescription={(value) => value.value}
+              getLabel={(value, index) => `${index + 1}. ${value.label || value.value || 'Untitled Value'}`}
+              getValue={(_value, index) => String(index)}
+              items={selectedFeatureGroupData.values || []}
+              onSelect={(value) => setSelectedFeatureValueIndex(Number(value))}
+              selectedValue={String(selectedFeatureValueIndex)}
+              title="Feature Values"
+            />
+            {selectedFeatureValueData ? (
+              <div className="schema-form compact schema-inline-editor">
+                <TextField
+                  inputRef={focusPendingInput(`featureValue:${selectedFeatureValueData._uiId}`)}
+                  label="value"
+                  onChange={(value) => updateFeatureValue(selectedFeatureValueIndex, { value })}
+                  value={selectedFeatureValueData.value}
+                />
+                <TextField label="label" onChange={(value) => updateFeatureValue(selectedFeatureValueIndex, { label: value })} value={selectedFeatureValueData.label} />
               </div>
-            ))}
+            ) : null}
           </>
         ) : <div className="schema-empty-state">No feature group selected.</div>}
       </div>
@@ -528,37 +962,60 @@ export default function SubjectSchemaEditor() {
   )
 
   const renderRelationsEditor = () => (
-    <div className="schema-table-editor single">
-      <div className="schema-editor-toolbar">
-        <button onClick={addRelationType} type="button">Add Relation</button>
+    <div className="schema-split-editor">
+      <div className="schema-list-editor">
+        <SchemaItemList
+          actions={[
+            { label: 'Add', onClick: addRelationType },
+            { label: 'Delete', onClick: () => deleteRelationType(selectedRelationIndex), disabled: !selectedRelationData, danger: true },
+            { label: 'Up', onClick: () => moveRelationType(selectedRelationIndex, -1), disabled: !selectedRelationData || selectedRelationIndex <= 0 },
+            { label: 'Down', onClick: () => moveRelationType(selectedRelationIndex, 1), disabled: !selectedRelationData || selectedRelationIndex >= (schema.relationTypes || []).length - 1 },
+          ]}
+          emptyText="No relation type."
+          getDescription={(relation) => relation.value}
+          getLabel={(relation, index) => `${index + 1}. ${relation.label || relation.value || 'Untitled Relation'}`}
+          getValue={(_relation, index) => String(index)}
+          items={schema.relationTypes || []}
+          onSelect={(value) => setSelectedRelationIndex(Number(value))}
+          selectedValue={String(selectedRelationIndex)}
+          title="Relation Types"
+        />
       </div>
-      {(schema.relationTypes || []).map((relation, index) => (
-        <div className="schema-table-row" key={`${relation.value}-${index}`}>
-          <input onChange={(event) => updateRelationType(index, { value: event.target.value })} value={relation.value || ''} />
-          <input onChange={(event) => updateRelationType(index, { label: event.target.value })} value={relation.label || ''} />
-          <button className="danger" onClick={() => deleteRelationType(index)} type="button">Delete</button>
-        </div>
-      ))}
+      <div className="schema-form">
+        {selectedRelationData ? (
+          <>
+            <TextField
+              inputRef={focusPendingInput(`relation:${selectedRelationData._uiId}`)}
+              label="value"
+              onChange={(value) => updateRelationType(selectedRelationIndex, { value })}
+              value={selectedRelationData.value}
+            />
+            <TextField label="label" onChange={(value) => updateRelationType(selectedRelationIndex, { label: value })} value={selectedRelationData.label} />
+          </>
+        ) : <div className="schema-empty-state">No relation selected.</div>}
+      </div>
     </div>
   )
 
   const renderRulesEditor = () => (
     <div className="schema-split-editor">
       <div className="schema-list-editor">
-        <div className="schema-editor-toolbar">
-          <button onClick={addRule} type="button">Add Rule</button>
-        </div>
-        {schema.validationRules.map((rule, index) => (
-          <button
-            className={rule.id === selectedRuleId ? 'selected' : ''}
-            key={`${rule.id}-${index}`}
-            onClick={() => setSelectedRule(rule.id)}
-            type="button"
-          >
-            <strong>{rule.id || `Rule ${index + 1}`}</strong>
-            <small>{rule.type} / {rule.level}</small>
-          </button>
-        ))}
+        <SchemaItemList
+          actions={[
+            { label: 'Add', onClick: addRule },
+            { label: 'Delete', onClick: () => deleteRule(schema.validationRules.indexOf(selectedRuleData)), disabled: !selectedRuleData, danger: true },
+            { label: 'Up', onClick: () => moveRule(schema.validationRules.indexOf(selectedRuleData), -1), disabled: schema.validationRules.indexOf(selectedRuleData) <= 0 },
+            { label: 'Down', onClick: () => moveRule(schema.validationRules.indexOf(selectedRuleData), 1), disabled: schema.validationRules.indexOf(selectedRuleData) < 0 || schema.validationRules.indexOf(selectedRuleData) >= schema.validationRules.length - 1 },
+          ]}
+          emptyText="No validation rule."
+          getDescription={(rule) => `${rule.type || 'rule'} / ${rule.level || 'level'}`}
+          getLabel={(rule, index) => `${index + 1}. ${rule.id || `Rule ${index + 1}`}`}
+          getValue={(rule) => rule.id}
+          items={schema.validationRules}
+          onSelect={setSelectedRule}
+          selectedValue={selectedRuleId}
+          title="Validation Rules"
+        />
       </div>
       <div className="schema-form">
         {selectedRuleData ? (
@@ -576,7 +1033,6 @@ export default function SubjectSchemaEditor() {
             <TextField label="role" onChange={(value) => updateRule(schema.validationRules.indexOf(selectedRuleData), { role: value })} value={selectedRuleData.role} />
             <TextField label="featureGroup" onChange={(value) => updateRule(schema.validationRules.indexOf(selectedRuleData), { featureGroup: value })} value={selectedRuleData.featureGroup} />
             <TextField label="message" onChange={(value) => updateRule(schema.validationRules.indexOf(selectedRuleData), { message: value })} value={selectedRuleData.message} />
-            <button className="danger" onClick={() => deleteRule(schema.validationRules.indexOf(selectedRuleData))} type="button">Delete Rule</button>
           </>
         ) : <div className="schema-empty-state">No rule selected.</div>}
       </div>
@@ -593,7 +1049,6 @@ export default function SubjectSchemaEditor() {
   const renderActiveEditor = () => {
     if (activeNode === 'basic') return renderBasicEditor()
     if (activeNode === 'kinds') return renderKindEditor()
-    if (activeNode === 'roles') return renderRolesEditor()
     if (activeNode === 'features') return renderFeaturesEditor()
     if (activeNode === 'relations') return renderRelationsEditor()
     if (activeNode === 'rules') return renderRulesEditor()
@@ -621,21 +1076,28 @@ export default function SubjectSchemaEditor() {
         <aside className="schema-file-panel">
           <div className="schema-panel-title">Schema Files</div>
           <small title={schemaFolder}>{schemaFolder || '--'}</small>
-          <div className="schema-file-list">
-            {schemaFiles.length === 0 ? (
-              <div className="schema-empty-state">No schema file.</div>
-            ) : schemaFiles.map((file) => (
-              <button
-                className={file.filePath === filePath ? 'selected' : ''}
-                key={file.filePath}
-                onClick={() => openSchemaFile(file.filePath)}
-                title={file.filePath}
-                type="button"
-              >
-                {file.fileName}
-              </button>
-            ))}
-          </div>
+          <SchemaItemList
+            actions={[
+              { label: 'Open', onClick: () => openSchemaFile(selectedSchemaFilePath), disabled: !selectedSchemaFilePath },
+              { label: 'Copy', onClick: () => copySchemaFile(selectedSchemaFilePath), disabled: !selectedSchemaFilePath },
+              {
+                label: 'Delete',
+                onClick: () => deleteSchemaFile(
+                  selectedSchemaFilePath,
+                  schemaFiles.find((file) => file.filePath === selectedSchemaFilePath)?.fileName,
+                ),
+                disabled: !selectedSchemaFilePath,
+                danger: true,
+              },
+            ]}
+            emptyText="No schema file."
+            getDescription={(file) => file.filePath}
+            getLabel={(file) => file.fileName}
+            getValue={(file) => file.filePath}
+            items={schemaFiles}
+            onSelect={setSelectedSchemaFilePath}
+            selectedValue={selectedSchemaFilePath}
+          />
         </aside>
 
         <aside className="schema-structure-panel">

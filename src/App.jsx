@@ -17,6 +17,7 @@ import { createVideoFrame } from './renderer/media/videoAdapter'
 import {
   appendRefsToACardTree,
   createACardPatch,
+  flattenACardTree,
   getEntityACardTree,
   refsToACardTree,
   removeACardsByAObjectIds,
@@ -30,13 +31,19 @@ import {
   createTextItem,
   normalizeCDocument,
 } from './renderer/domain/cDocument'
+import { createDefaultEntityFilter } from './renderer/domain/entityFilter'
 import {
   DOMAIN_SCHEMAS,
+  getDomainDefaultSubKind,
   getDomainEntityRoleRule,
   getDomainKind,
+  getDomainRole,
+  getDomainRolesForKind,
   getDomainSchema,
+  getDomainSubKind,
   getEntityAObjectIds,
   getEntityAObjectRefs,
+  normalizeSubjectSchemas,
   validateDomainEntity,
 } from './renderer/domain/domainSchemas'
 import { captureVideoFrameSnapshot } from './renderer/media/videoFrameSnapshot'
@@ -45,6 +52,9 @@ import './App.css'
 const RECENT_IMAGES_KEY = 'annotationLab.recentImages'
 const MAX_RECENT_IMAGES = 20
 const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
+const DEFAULT_APP_SETTINGS = {
+  frameTimestampToleranceSeconds: 0.1,
+}
 const LEFT_PANEL_DEFAULT_WIDTH = 180
 const LEFT_PANEL_MIN_WIDTH = 132
 const PANEL_MAX_WIDTH = 560
@@ -72,6 +82,17 @@ const AB_INSPECTOR_TABS = [
 ]
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
+
+const normalizeAppSettings = (settings = {}) => {
+  const tolerance = Number(settings.frameTimestampToleranceSeconds)
+  return {
+    ...DEFAULT_APP_SETTINGS,
+    ...settings,
+    frameTimestampToleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0
+      ? tolerance
+      : DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds,
+  }
+}
 
 const getPathFileName = (filePath = '') => {
   const parts = String(filePath).split(/[\\/]/)
@@ -141,12 +162,7 @@ const createEmptyCWorkspace = (overrides = {}) => ({
   cSaveStatus: 'Unsaved',
   bIndexItems: [],
   bIndexSources: [],
-  bIndexFilter: {
-    subject: 'all',
-    kind: 'all',
-    source: 'all',
-    query: '',
-  },
+  bIndexFilter: createDefaultEntityFilter(),
   selectedBIndexItemKey: '',
   selectedCItemId: null,
   layoutState: DEFAULT_C_WORKSPACE_LAYOUT,
@@ -179,8 +195,127 @@ const cItemTreeContains = (items, itemId) => (
   ))
 )
 
+function getFrameTimeStamp(targetFrame) {
+  const time = Number(targetFrame?.timeStamp ?? targetFrame?.locator?.time)
+  return Number.isFinite(time) ? time : null
+}
+
+function normalizeFrameTimeStamps(sourceKind, frameItems = []) {
+  return frameItems.map((frameItem) => {
+    if (sourceKind === 'video' || frameItem.kind === 'video-frame') {
+      const timeStamp = getFrameTimeStamp(frameItem) ?? 0
+      return {
+        ...frameItem,
+        timeStamp,
+        locator: {
+          ...frameItem.locator,
+          time: timeStamp,
+        },
+      }
+    }
+    return {
+      ...frameItem,
+      timeStamp: null,
+    }
+  })
+}
+
+function findFrameByTimeStamp(frameItems = [], timeStamp, toleranceSeconds = DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds) {
+  const targetTime = Number(timeStamp)
+  const tolerance = Number(toleranceSeconds)
+  if (!Number.isFinite(targetTime)) return null
+  return frameItems.find((frameItem) => {
+    const frameTime = getFrameTimeStamp(frameItem)
+    return Number.isFinite(frameTime) && Math.abs(frameTime - targetTime) <= Math.max(0, tolerance)
+  }) || null
+}
+
+function normalizeAnnotationTimeStamps(sourceKind, annotationItems = [], frameItems = []) {
+  const normalizedFrames = normalizeFrameTimeStamps(sourceKind, frameItems)
+  const frameMap = new Map(normalizedFrames.map((item) => [item.id, item]))
+  return annotationItems.map((annotation) => {
+    if (annotation.timeStamp !== undefined) return annotation
+    if (sourceKind !== 'video') {
+      return {
+        ...annotation,
+        timeStamp: null,
+      }
+    }
+    return {
+      ...annotation,
+      timeStamp: getFrameTimeStamp(frameMap.get(annotation.frameId)),
+    }
+  })
+}
+
+function ensureFramesForAnnotationTimeStamps(source, frameItems = [], annotationItems = [], toleranceSeconds = DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds) {
+  const normalizedFrameItems = normalizeFrameTimeStamps(source?.kind, frameItems)
+  if (source?.kind !== 'video') {
+    return {
+      frames: normalizedFrameItems,
+      annotations: annotationItems,
+    }
+  }
+
+  const frameMap = new Map(normalizedFrameItems.map((item) => [item.id, item]))
+  const nextFrames = [...normalizedFrameItems]
+  const nextAnnotations = annotationItems.map((annotation) => {
+    const timeStamp = Number(annotation.timeStamp)
+    if (!Number.isFinite(timeStamp)) return annotation
+
+    const existingFrame = findFrameByTimeStamp(nextFrames, timeStamp, toleranceSeconds)
+    const frameId = existingFrame?.id || annotation.frameId || createId('frame')
+    if (!frameMap.has(frameId)) {
+      const nextFrame = createVideoFrame(source, {
+        id: frameId,
+        timeStamp,
+        width: source.meta?.width ?? null,
+        height: source.meta?.height ?? null,
+        duration: source.meta?.duration ?? null,
+        createdAt: annotation.createdAt,
+      })
+      frameMap.set(nextFrame.id, nextFrame)
+      nextFrames.push(nextFrame)
+    }
+
+    return annotation.frameId === frameId
+      ? annotation
+      : {
+          ...annotation,
+          frameId,
+        }
+  })
+
+  return {
+    frames: nextFrames,
+    annotations: nextAnnotations,
+  }
+}
+
+function stripEntityFrameFields(entity = {}) {
+  const {
+    frame,
+    frameId,
+    defaultFrame,
+    defaultFrameId,
+    currentFrame,
+    currentFrameId,
+    ...rest
+  } = entity
+  return rest
+}
+
+function sanitizeEntityForPersistence(entity = {}) {
+  const cleanEntity = stripEntityFrameFields(entity)
+  return {
+    ...cleanEntity,
+    ...createACardPatch(getEntityACardTree(cleanEntity)),
+  }
+}
+
 function App() {
   const pendingPreviewFrameIdsRef = useRef(new Set())
+  const appSettingsRef = useRef(DEFAULT_APP_SETTINGS)
   const [source, setSource] = useState(null)
   const [frame, setFrame] = useState(null)
   const [frames, setFrames] = useState([])
@@ -215,14 +350,14 @@ function App() {
   const [entityMenu, setEntityMenu] = useState(null)
   const [aObjectMenu, setAObjectMenu] = useState(null)
   const [frameMenu, setFrameMenu] = useState(null)
+  const [expandedAObjectId, setExpandedAObjectId] = useState(null)
+  const [expandedInspectorEntityIds, setExpandedInspectorEntityIds] = useState([])
   const [entityDialog, setEntityDialog] = useState(null)
   const [addToEntityDialog, setAddToEntityDialog] = useState(null)
   const [selectedEntityId, setSelectedEntityId] = useState(null)
   const [cWorkspaces, setCWorkspaces] = useState({})
   const [pendingImageSwitch, setPendingImageSwitch] = useState(null)
-  const [pendingEditorOpenInput, setPendingEditorOpenInput] = useState(null)
   const [pendingEditorCloseSessionId, setPendingEditorCloseSessionId] = useState(null)
-  const [pendingCompositeOpenResult, setPendingCompositeOpenResult] = useState(null)
   const [workspaceTabMenu, setWorkspaceTabMenu] = useState(null)
   const [currentABInput, setCurrentABInput] = useState(null)
   const [pendingABInput, setPendingABInput] = useState(null)
@@ -233,31 +368,40 @@ function App() {
   const [bindFrameRequest, setBindFrameRequest] = useState(null)
   const [pendingBindFrame, setPendingBindFrame] = useState(null)
   const [bindFrameDialogPosition, setBindFrameDialogPosition] = useState(null)
+  const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS)
+  const [settingsDialog, setSettingsDialog] = useState(null)
   const [bindFrameDialogDrag, setBindFrameDialogDrag] = useState(null)
   const [videoSeekRequest, setVideoSeekRequest] = useState(null)
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH)
   const [lastLeftPanelWidth, setLastLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH)
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   const [resizingPanel, setResizingPanel] = useState(null)
+  const [subjectSchemas, setSubjectSchemas] = useState(() => normalizeSubjectSchemas(DOMAIN_SCHEMAS))
 
   const formatGeometryValue = (value) => (
     Number.isFinite(value) ? value.toFixed(6) : '--'
   )
 
-  const getSubjectLabel = (subjectId) => getDomainSchema(subjectId)?.label || subjectId
+  const getSubjectLabel = (subjectId) => getDomainSchema(subjectId, subjectSchemas)?.label || subjectId
 
   const getKindLabel = (subjectId, kindValue) => {
-    const schema = getDomainSchema(subjectId)
+    const schema = getDomainSchema(subjectId, subjectSchemas)
     return getDomainKind(schema, kindValue)?.label || kindValue
   }
 
+  const getSubKindLabel = (subjectId, kindValue, subKindValue) => {
+    if (!subKindValue) return '--'
+    const schema = getDomainSchema(subjectId, subjectSchemas)
+    return getDomainSubKind(schema, kindValue, subKindValue)?.label || subKindValue
+  }
+
   const getEntityDefaultRole = (entity) => {
-    const schema = getDomainSchema(entity.subject)
-    return getDomainKind(schema, entity.kind)?.value || entity.kind
+    const schema = getDomainSchema(entity.subject, subjectSchemas)
+    return getDomainRolesForKind(schema, entity.kind)[0]?.value || 'default'
   }
 
   const getEntityRuleText = (entity) => {
-    const rule = getDomainEntityRoleRule(entity)
+    const rule = getDomainEntityRoleRule(entity, subjectSchemas)
     return {
       required: rule.requiredRoles.map((role) => role.label).join(', ') || '--',
       optional: rule.optionalRoles.map((role) => role.label).join(', ') || '--',
@@ -271,6 +415,52 @@ function App() {
     : createEmptyCWorkspace({ cSaveStatus: 'Not saved' })
   const firstCWorkspace = cWorkspaceEntries[0]?.[1] || null
   const visibleCWorkspace = activeCWorkspaceId ? activeCWorkspace : firstCWorkspace || createEmptyCWorkspace({ cSaveStatus: 'Not saved' })
+
+  useEffect(() => {
+    let canceled = false
+    window.labApi?.listSubjectSchemas?.().then(async (listResult) => {
+      if (canceled) return
+      if (!listResult?.ok) {
+        setSubjectSchemas(normalizeSubjectSchemas(DOMAIN_SCHEMAS))
+        return
+      }
+
+      const readResults = await Promise.all(
+        (listResult.files || []).map((file) => window.labApi?.readSubjectSchemaFile?.(file.filePath))
+      )
+      if (canceled) return
+      const schemas = readResults
+        .filter((result) => result?.ok && result.data)
+        .map((result) => result.data)
+      setSubjectSchemas(normalizeSubjectSchemas(schemas))
+    })
+    return () => {
+      canceled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    appSettingsRef.current = appSettings
+  }, [appSettings])
+
+  useEffect(() => {
+    let canceled = false
+    window.labApi?.readSettings?.().then((result) => {
+      if (canceled || !result?.ok) return
+      setAppSettings(normalizeAppSettings(result.settings))
+    })
+    const unsubscribe = window.labApi?.onOpenSettings?.(() => {
+      setSettingsDialog({
+        draft: normalizeAppSettings(appSettingsRef.current),
+        error: '',
+        filePath: '',
+      })
+    })
+    return () => {
+      canceled = true
+      unsubscribe?.()
+    }
+  }, [])
 
   const workspaceTabs = [
     ...editorWorkspace.sessions.map((session) => {
@@ -293,6 +483,21 @@ function App() {
       dirty: workspace.cSaveStatus === 'Unsaved',
     })),
   ]
+
+  const saveSettingsDialog = async () => {
+    if (!settingsDialog) return
+    const nextSettings = normalizeAppSettings(settingsDialog.draft)
+    const result = await window.labApi?.saveSettings?.(nextSettings)
+    if (!result?.ok) {
+      setSettingsDialog((current) => ({
+        ...current,
+        error: `Save failed: ${result?.reason || 'unknown error'}`,
+      }))
+      return
+    }
+    setAppSettings(normalizeAppSettings(result.settings))
+    setSettingsDialog(null)
+  }
 
   const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId)
     || workspaceTabs.find((tab) => tab.id === editorWorkspace.activeId)
@@ -490,7 +695,7 @@ function App() {
     input: currentABInput,
     source,
     frame,
-    frames,
+    frames: normalizeFrameTimeStamps(source?.kind, frames),
     framePreviewUrl,
     framePreviewCache,
     selectedFrameId,
@@ -507,38 +712,40 @@ function App() {
     textDraft,
     imageFolderPath,
     imageFolderItems,
-    entities,
+    entities: entities.map((entity) => sanitizeEntityForPersistence(entity)),
     selectedEntityId,
     layoutState: editorWorkspace.sessions.find((session) => session.id === editorWorkspace.activeId)?.layoutState,
     ...overrides,
   })
 
   const applyEditorSessionSnapshot = (session) => {
+    const sessionFrames = normalizeFrameTimeStamps(session.source?.kind, session.frames || [])
+    const sessionFrame = sessionFrames.find((item) => item.id === session.frame?.id) || sessionFrames[0] || null
+    const sessionAnnotations = normalizeAnnotationTimeStamps(session.source?.kind, session.annotations || [], sessionFrames)
     setMessage(session.message || '')
     setSource(session.source || null)
-    setFrame(session.frame || null)
-    setFrames(session.frames || [])
+    setFrame(sessionFrame)
+    setFrames(sessionFrames)
     setFramePreviewUrl(session.framePreviewUrl || '')
     setFramePreviewCache(session.framePreviewCache || {})
-    setSelectedFrameId(session.selectedFrameId || session.frame?.id || null)
+    setSelectedFrameId(session.selectedFrameId || sessionFrame?.id || null)
     setImageFolderPath(session.imageFolderPath || '')
     setImageFolderItems(session.imageFolderItems || [])
     setImageSize(session.imageSize || null)
     setZoomMode(session.zoomMode || 'fit')
     setZoom(session.zoom || 1)
     setToolMode(session.toolMode || 'select')
-    setAnnotations(session.annotations || [])
+    setAnnotations(sessionAnnotations)
     setSelectedAnnotationIds(session.selectedAnnotationIds || [])
     setAnnotationFilePath(session.annotationFilePath || '')
     setSaveStatus(session.saveStatus || 'Not saved')
     setEditingTextId(session.editingTextId || null)
     setTextDraft(session.textDraft || '')
-    setEntities(session.entities || [])
+    setEntities((session.entities || []).map((entity) => sanitizeEntityForPersistence(entity)))
     setSelectedEntityId(session.selectedEntityId || null)
     setCurrentABInput(session.input || null)
     setPendingABInput(null)
     setPendingImageSwitch(null)
-    setPendingEditorOpenInput(null)
     setPendingEditorCloseSessionId(null)
     setEntityMenu(null)
     setAObjectMenu(null)
@@ -554,23 +761,26 @@ function App() {
   )
 
   const buildAnnotationDocumentFromSession = (session) => {
-    const sessionAnnotations = session.editingTextId
+    const rawSessionAnnotations = session.editingTextId
       ? (session.annotations || []).map((annotation) => (
           annotation.id === session.editingTextId
             ? { ...annotation, text: session.textDraft, updatedAt: new Date().toISOString() }
             : annotation
         ))
       : (session.annotations || [])
+    const normalized = ensureFramesForAnnotationTimeStamps(
+      session.source,
+      session.frames || (session.frame ? [session.frame] : []),
+      rawSessionAnnotations,
+      appSettings.frameTimestampToleranceSeconds,
+    )
 
     return {
       schemaVersion: 1,
       sources: session.source ? [session.source] : [],
-      frames: session.frames || (session.frame ? [session.frame] : []),
-      annotations: sessionAnnotations,
-      entities: (session.entities || []).map((entity) => ({
-        ...entity,
-        ...createACardPatch(getEntityACardTree(entity)),
-      })),
+      frames: normalized.frames,
+      annotations: normalized.annotations,
+      entities: (session.entities || []).map((entity) => sanitizeEntityForPersistence(entity)),
       collections: [],
     }
   }
@@ -726,13 +936,17 @@ function App() {
   }
 
   const applyImageEditorSession = (session) => {
-    const targetEntity = session.entities.find((entity) => entity.id === session.input?.entityId)
-      || session.entities[0]
+    const sessionEntities = (session.entities || []).map((entity) => sanitizeEntityForPersistence(entity))
+    const targetEntity = sessionEntities.find((entity) => entity.id === session.input?.entityId)
+      || sessionEntities[0]
       || null
+    const sessionFrames = normalizeFrameTimeStamps(session.source?.kind, session.frames || (session.frame ? [session.frame] : []))
+    const sessionFrame = sessionFrames.find((item) => item.id === session.frame?.id) || sessionFrames[0] || null
+    const sessionAnnotations = normalizeAnnotationTimeStamps(session.source?.kind, session.annotations, sessionFrames)
     setMessage('')
     setSource(session.source)
-    setFrame(session.frame)
-    setFrames(session.frames || (session.frame ? [session.frame] : []))
+    setFrame(sessionFrame)
+    setFrames(sessionFrames)
     setFramePreviewUrl(session.source?.kind === 'image' ? session.source.fileUrl : '')
     setFramePreviewCache({})
     setImageFolderPath(session.folderPath)
@@ -741,7 +955,7 @@ function App() {
     setZoomMode('fit')
     setZoom(1)
     setToolMode('select')
-    setSelectedFrameId(session.frame?.id || null)
+    setSelectedFrameId(sessionFrame?.id || null)
     setSelectedAnnotationIds([])
     setEditingTextId(null)
     setEntityMenu(null)
@@ -751,8 +965,8 @@ function App() {
     setAddToEntityDialog(null)
     setSelectedEntityId(targetEntity?.id || null)
     setAnnotationFilePath(session.annotationFilePath)
-    setAnnotations(session.annotations)
-    setEntities(session.entities)
+    setAnnotations(sessionAnnotations)
+    setEntities(sessionEntities)
     setSaveStatus(session.saveStatus)
     setCurrentABInput(session.input)
     setPendingABInput(null)
@@ -774,27 +988,11 @@ function App() {
       return true
     }
     if (source) {
-      setPendingEditorOpenInput(input)
+      openInputInNewEditor(input)
       return false
     }
     startLoadInCurrentEditor(input)
     return true
-  }
-
-  const confirmEditorOpenChoice = (mode) => {
-    const target = pendingEditorOpenInput
-    if (!target) return
-    setPendingEditorOpenInput(null)
-    if (mode === 'cancel') return
-    if (mode === 'new') {
-      openInputInNewEditor(target)
-      return
-    }
-    if (source && saveStatus === 'Unsaved') {
-      setPendingImageSwitch(target)
-      return
-    }
-    startLoadInCurrentEditor(target)
   }
 
   const handleABSessionLoadStart = () => {
@@ -836,22 +1034,57 @@ function App() {
 
   const useVideoFrame = (nextFrame, videoSize = {}, previewUrl = '', options = {}) => {
     if (!nextFrame) return
+    const frameTimeStamp = getFrameTimeStamp(nextFrame)
     const width = videoSize.width || nextFrame.meta?.width || imageSize?.width || null
     const height = videoSize.height || nextFrame.meta?.height || imageSize?.height || null
-    setFrame(nextFrame)
-    setSelectedFrameId(nextFrame.id)
+    const existingFrame = source?.kind === 'video'
+      ? findFrameByTimeStamp(frames, frameTimeStamp, appSettings.frameTimestampToleranceSeconds)
+      : null
+    const targetFrame = existingFrame
+      ? {
+          ...existingFrame,
+          timeStamp: frameTimeStamp ?? getFrameTimeStamp(existingFrame),
+          locator: {
+            ...existingFrame.locator,
+            time: frameTimeStamp ?? getFrameTimeStamp(existingFrame) ?? 0,
+          },
+          meta: {
+            ...existingFrame.meta,
+            width: width ?? existingFrame.meta?.width ?? null,
+            height: height ?? existingFrame.meta?.height ?? null,
+            duration: nextFrame.meta?.duration ?? existingFrame.meta?.duration ?? null,
+          },
+          updatedAt: new Date().toISOString(),
+        }
+      : {
+          ...nextFrame,
+          timeStamp: source?.kind === 'video' ? frameTimeStamp ?? 0 : null,
+          locator: source?.kind === 'video'
+            ? {
+                ...nextFrame.locator,
+                time: frameTimeStamp ?? 0,
+              }
+            : nextFrame.locator || {},
+        }
+    setFrame(targetFrame)
+    setSelectedFrameId(targetFrame.id)
     setFrames((current) => {
-      const nextFrames = current.some((item) => item.id === nextFrame.id)
-        ? current.map((item) => (item.id === nextFrame.id ? nextFrame : item))
-        : [...current, nextFrame]
+      const normalizedCurrent = normalizeFrameTimeStamps(source?.kind, current)
+      const currentMatch = source?.kind === 'video'
+        ? findFrameByTimeStamp(normalizedCurrent, getFrameTimeStamp(targetFrame), appSettings.frameTimestampToleranceSeconds)
+        : null
+      const nextFrames = normalizedCurrent.some((item) => item.id === targetFrame.id || item.id === currentMatch?.id)
+        ? normalizedCurrent.map((item) => (item.id === targetFrame.id || item.id === currentMatch?.id ? targetFrame : item))
+        : [...normalizedCurrent, targetFrame]
       return nextFrames
     })
     setFramePreviewUrl(previewUrl)
     if (previewUrl && width && height) {
       setFramePreviewCache((current) => ({
         ...current,
-        [nextFrame.id]: {
-          frameId: nextFrame.id,
+        [targetFrame.id]: {
+          frameId: targetFrame.id,
+          ok: true,
           imageUrl: previewUrl,
           imageSize: {
             width,
@@ -872,7 +1105,7 @@ function App() {
           ...current.meta,
           width: width ?? current.meta?.width ?? null,
           height: height ?? current.meta?.height ?? null,
-          duration: nextFrame.meta?.duration ?? current.meta?.duration ?? null,
+          duration: targetFrame.meta?.duration ?? current.meta?.duration ?? null,
         },
         updatedAt: new Date().toISOString(),
       }
@@ -880,7 +1113,7 @@ function App() {
     setToolMode('select')
     if (!options.previewOnly) {
       setSaveStatus('Unsaved')
-      setMessage(`Using video frame at ${Number(nextFrame.locator?.time || 0).toFixed(2)}s.`)
+      setMessage(`Using video frame at ${Number(targetFrame.locator?.time || 0).toFixed(2)}s.`)
     }
   }
 
@@ -963,6 +1196,9 @@ function App() {
   }
 
   const normalizeNewAnnotation = (annotation) => {
+    const timeStamp = source?.kind === 'video' && frame?.kind === 'video-frame'
+      ? getFrameTimeStamp(frame)
+      : null
     if (
       source?.kind === 'video'
       && frame?.kind === 'video-frame'
@@ -971,9 +1207,13 @@ function App() {
       return {
         ...annotation,
         frameId: frame.id,
+        timeStamp,
       }
     }
-    return annotation
+    return {
+      ...annotation,
+      timeStamp,
+    }
   }
 
   const addAnnotation = (annotation) => {
@@ -1139,16 +1379,29 @@ function App() {
       setMessage('Bind failed: current playback frame is not available.')
       return
     }
-    const existingFrame = frames.find((item) => (
-      item.kind === 'video-frame'
-      && Math.abs(Number(item.locator?.time ?? Number.NaN) - time) < 0.05
-    ))
-    const nextFrame = existingFrame || createVideoFrame(source, {
-      time,
-      width: videoSize.width || source.meta?.width || imageSize?.width || null,
-      height: videoSize.height || source.meta?.height || imageSize?.height || null,
-      duration: duration ?? source.meta?.duration ?? null,
-    })
+    const existingFrame = findFrameByTimeStamp(frames, time, appSettings.frameTimestampToleranceSeconds)
+    const nextFrame = existingFrame
+      ? {
+          ...existingFrame,
+          timeStamp: time,
+          locator: {
+            ...existingFrame.locator,
+            time,
+          },
+          meta: {
+            ...existingFrame.meta,
+            width: videoSize.width || existingFrame.meta?.width || source.meta?.width || imageSize?.width || null,
+            height: videoSize.height || existingFrame.meta?.height || source.meta?.height || imageSize?.height || null,
+            duration: duration ?? existingFrame.meta?.duration ?? source.meta?.duration ?? null,
+          },
+          updatedAt: now,
+        }
+      : createVideoFrame(source, {
+          timeStamp: time,
+          width: videoSize.width || source.meta?.width || imageSize?.width || null,
+          height: videoSize.height || source.meta?.height || imageSize?.height || null,
+          duration: duration ?? source.meta?.duration ?? null,
+        })
     const width = videoSize.width || nextFrame.meta?.width || imageSize?.width || null
     const height = videoSize.height || nextFrame.meta?.height || imageSize?.height || null
     const selectedIdSet = new Set(annotationIds)
@@ -1158,15 +1411,17 @@ function App() {
         ? {
             ...annotation,
             frameId: nextFrame.id,
+            timeStamp: time,
             updatedAt: now,
           }
         : annotation
     )))
-    setFrames((current) => (
-      current.some((item) => item.id === nextFrame.id)
-        ? current
-        : [...current, nextFrame]
-    ))
+    setFrames((current) => {
+      const normalizedCurrent = normalizeFrameTimeStamps(source?.kind, current)
+      return normalizedCurrent.some((item) => item.id === nextFrame.id)
+        ? normalizedCurrent.map((item) => (item.id === nextFrame.id ? nextFrame : item))
+        : [...normalizedCurrent, nextFrame]
+    })
     setFrame(nextFrame)
     setSelectedFrameId(nextFrame.id)
     if (previewUrl && width && height) {
@@ -1175,6 +1430,7 @@ function App() {
         ...current,
         [nextFrame.id]: {
           frameId: nextFrame.id,
+          ok: true,
           imageUrl: previewUrl,
           imageSize: { width, height },
           updatedAt: now,
@@ -1210,23 +1466,25 @@ function App() {
     })
   }
 
-  const buildAnnotationDocument = () => ({
-    schemaVersion: 1,
-    sources: source ? [source] : [],
-    frames,
-    annotations: editingTextId
+  const buildAnnotationDocument = () => {
+    const rawAnnotations = editingTextId
       ? annotations.map((annotation) => (
           annotation.id === editingTextId
             ? { ...annotation, text: textDraft, updatedAt: new Date().toISOString() }
             : annotation
         ))
-      : annotations,
-    entities: entities.map((entity) => ({
-      ...entity,
-      ...createACardPatch(getEntityACardTree(entity)),
-    })),
-    collections: [],
-  })
+      : annotations
+    const normalized = ensureFramesForAnnotationTimeStamps(source, frames, rawAnnotations, appSettings.frameTimestampToleranceSeconds)
+
+    return {
+      schemaVersion: 1,
+      sources: source ? [source] : [],
+      frames: normalized.frames,
+      annotations: normalized.annotations,
+      entities: entities.map((entity) => sanitizeEntityForPersistence(entity)),
+      collections: [],
+    }
+  }
 
   const saveAnnotations = async () => {
     if (!source) return false
@@ -1334,9 +1592,26 @@ function App() {
     const matchedFrame = frames.find((item) => item.id === annotation.frameId)
     if (matchedFrame) return matchedFrame
     if (frame?.id === annotation.frameId) return frame
+    const timeStamp = Number(annotation.timeStamp)
+    if (source?.kind === 'video' && Number.isFinite(timeStamp)) {
+      return {
+        id: annotation.frameId || `frame_timestamp_${annotation.id}`,
+        sourceId: source.id,
+        kind: 'video-frame',
+        locator: {
+          time: timeStamp,
+        },
+        meta: {
+          width: source.meta?.width ?? imageSize?.width ?? null,
+          height: source.meta?.height ?? imageSize?.height ?? null,
+          duration: source.meta?.duration ?? null,
+        },
+        virtual: true,
+      }
+    }
 
     return null
-  }, [frame, frames])
+  }, [frame, frames, imageSize?.height, imageSize?.width, source])
 
   const getAnnotationVideoTarget = useCallback((annotation) => {
     if (source?.kind !== 'video') return null
@@ -1362,6 +1637,13 @@ function App() {
     if (!videoTarget) return null
     const cachedPreview = framePreviewCache[videoTarget.frame.id]
     if (cachedPreview?.imageUrl && cachedPreview?.imageSize) return cachedPreview
+    if (cachedPreview?.ok === false) {
+      return {
+        frameId: videoTarget.frame.id,
+        ok: false,
+        reason: cachedPreview.reason || 'frame-preview-failed',
+      }
+    }
     if (frame?.id === videoTarget.frame.id && framePreviewUrl && imageSize) {
       return {
         frameId: videoTarget.frame.id,
@@ -1377,6 +1659,7 @@ function App() {
     const videoTarget = getAnnotationVideoTarget(annotation)
     if (!videoTarget) return
     if (framePreviewCache[videoTarget.frame.id]?.imageUrl) return
+    if (framePreviewCache[videoTarget.frame.id]?.ok === false) return
     if (pendingPreviewFrameIdsRef.current.has(videoTarget.frame.id)) return
 
     pendingPreviewFrameIdsRef.current.add(videoTarget.frame.id)
@@ -1384,11 +1667,23 @@ function App() {
       src: source.fileUrl,
       time: videoTarget.time,
     }).then((result) => {
-      if (!result?.ok) return
+      if (!result?.ok) {
+        setFramePreviewCache((current) => ({
+          ...current,
+          [videoTarget.frame.id]: {
+            frameId: videoTarget.frame.id,
+            ok: false,
+            reason: result?.reason || 'video-snapshot-failed',
+            updatedAt: new Date().toISOString(),
+          },
+        }))
+        return
+      }
       setFramePreviewCache((current) => ({
         ...current,
         [videoTarget.frame.id]: {
           frameId: videoTarget.frame.id,
+          ok: true,
           imageUrl: result.previewUrl,
           imageSize: result.imageSize,
           updatedAt: new Date().toISOString(),
@@ -1424,6 +1719,12 @@ function App() {
   )
 
   useEffect(() => {
+    setExpandedInspectorEntityIds((current) => (
+      current.filter((entityId) => entities.some((entity) => entity.id === entityId))
+    ))
+  }, [entities])
+
+  useEffect(() => {
     if (source?.kind !== 'video' || !previewAnnotationId) return
     const annotation = annotations.find((item) => item.id === previewAnnotationId)
     ensureAnnotationPreview(annotation)
@@ -1444,6 +1745,57 @@ function App() {
       return formatTime(Number(targetFrame.locator?.time))
     }
     return 'image'
+  }
+
+  const toggleInspectorEntityExpanded = (entityId) => {
+    setExpandedInspectorEntityIds((current) => (
+      current.includes(entityId)
+        ? current.filter((id) => id !== entityId)
+        : [...current, entityId]
+    ))
+  }
+
+  const expandAllInspectorEntities = () => {
+    setExpandedInspectorEntityIds(entities.map((entity) => entity.id))
+  }
+
+  const collapseAllInspectorEntities = () => {
+    setExpandedInspectorEntityIds([])
+  }
+
+  const renderInspectorEntityTreeNodes = (nodes, entity) => {
+    const schema = getDomainSchema(entity.subject, subjectSchemas)
+    return (
+      <ul className="inspector-entity-tree">
+        {nodes.map((node) => {
+          const annotation = getAnnotationById(node.aObjectId)
+          const roleLabel = getDomainRole(schema, entity.kind, node.role)?.label || node.role || '--'
+          return (
+            <li className="inspector-entity-tree-node" key={node.id}>
+              <button
+                className={selectedAnnotationIds.includes(node.aObjectId) ? 'selected' : ''}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (annotation) selectAnnotationsFromChild([node.aObjectId])
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (annotation) openAObjectMenu(node.aObjectId, event.clientX, event.clientY)
+                }}
+                title={node.aObjectId}
+                type="button"
+              >
+                <strong>{roleLabel}</strong>
+                <span>{annotation ? annotation.type : 'Missing A Object'}</span>
+                <small>{annotation ? getAnnotationSummary(annotation) : getCompactId(node.aObjectId)}</small>
+              </button>
+              {node.children?.length ? renderInspectorEntityTreeNodes(node.children, entity) : null}
+            </li>
+          )
+        })}
+      </ul>
+    )
   }
 
   const selectFrameFromInspector = (targetFrame) => {
@@ -1506,13 +1858,15 @@ function App() {
 
   const openEntityDialog = ({ sourceAObjectIds = [], entityId = null } = {}) => {
     const entity = entityId ? entities.find((item) => item.id === entityId) : null
-    const schema = getDomainSchema(entity?.subject || DOMAIN_SCHEMAS[0].id)
+    const schema = getDomainSchema(entity?.subject || subjectSchemas[0]?.id, subjectSchemas)
+    const kind = entity?.kind || schema.defaultKind
     setEntityDialog({
       mode: entity ? 'edit' : 'create',
       entityId: entity?.id || null,
       sourceAObjectIds,
       subject: schema.id,
-      kind: entity?.kind || schema.defaultKind,
+      kind,
+      subKind: entity?.subKind || getDomainDefaultSubKind(schema, kind),
       label: entity?.label || (sourceAObjectIds.length ? schema.defaultLabel : 'New Entity'),
     })
     setEntityMenu(null)
@@ -1523,14 +1877,23 @@ function App() {
   }
 
   const updateEntityDialogSubject = (subject) => {
-    const schema = getDomainSchema(subject)
+    const schema = getDomainSchema(subject, subjectSchemas)
     setEntityDialog((current) => ({
       ...current,
       subject: schema.id,
       kind: schema.defaultKind,
-      label: current.label === getDomainSchema(current.subject)?.defaultLabel
+      subKind: getDomainDefaultSubKind(schema, schema.defaultKind),
+      label: current.label === getDomainSchema(current.subject, subjectSchemas)?.defaultLabel
         ? schema.defaultLabel
         : current.label,
+    }))
+  }
+
+  const updateEntityDialogKind = (kind) => {
+    setEntityDialog((current) => ({
+      ...current,
+      kind,
+      subKind: getDomainDefaultSubKind(getDomainSchema(current.subject, subjectSchemas), kind),
     }))
   }
 
@@ -1543,6 +1906,7 @@ function App() {
               ...entity,
               subject: entityDialog.subject,
               kind: entityDialog.kind,
+              subKind: entityDialog.subKind || '',
               label: entityDialog.label.trim() || 'Entity',
               updatedAt: new Date().toISOString(),
             }
@@ -1559,10 +1923,11 @@ function App() {
       id: createId('b'),
       subject: entityDialog.subject,
       kind: entityDialog.kind,
+      subKind: entityDialog.subKind || '',
       label: entityDialog.label.trim() || 'Entity',
       ...createACardPatch(refsToACardTree((entityDialog.sourceAObjectIds || []).map((aObjectId) => ({
         aObjectId,
-        role: entityDialog.kind,
+        role: getDomainRolesForKind(getDomainSchema(entityDialog.subject, subjectSchemas), entityDialog.kind)[0]?.value || 'default',
       })))),
       status: 'active',
       createdAt: now,
@@ -1620,6 +1985,7 @@ function App() {
 
   const openEntityMenu = (entityId, x, y) => {
     setAbInspectorTab('b')
+    setAObjectMenu(null)
     setEntityMenu({ entityId, x, y })
   }
 
@@ -1628,8 +1994,8 @@ function App() {
   }
 
   const openAObjectMenu = (annotationId, x, y) => {
-    setAbInspectorTab('a')
     selectAnnotationsFromChild([annotationId])
+    setEntityMenu(null)
     setAObjectMenu({ annotationId, x, y })
   }
 
@@ -1657,6 +2023,48 @@ function App() {
     if (!annotation) return
     seekVideoToAnnotation(annotation)
     closeAObjectMenu()
+  }
+
+  const getFirstEntityAnnotation = (entity) => {
+    const firstCard = flattenACardTree(getEntityACardTree(entity))
+      .find((card) => getAnnotationById(card.aObjectId))
+    return firstCard ? getAnnotationById(firstCard.aObjectId) : null
+  }
+
+  const getEntityDefaultFrame = (entity) => {
+    const annotation = getFirstEntityAnnotation(entity)
+    return annotation ? getAnnotationFrame(annotation) : null
+  }
+
+  const goToEntityFromMenu = (entityId) => {
+    const entity = entities.find((item) => item.id === entityId)
+    if (!entity) return
+    const annotation = getFirstEntityAnnotation(entity)
+    const defaultFrame = getEntityDefaultFrame(entity)
+    setSelectedEntityId(entity.id)
+    setAbInspectorTab('b')
+    if (annotation) {
+      const videoTarget = getAnnotationVideoTarget(annotation)
+      if (source?.kind === 'image' && defaultFrame) {
+        goToFrame(defaultFrame)
+        setSelectedAnnotationIds([annotation.id])
+        setLastPreviewAnnotationId(annotation.id)
+      } else if (!videoTarget) {
+        setMessage(`Entity Go To failed: missing video frame for A object ${annotation.id}`)
+      } else {
+        setSelectedAnnotationIds([annotation.id])
+        setLastPreviewAnnotationId(annotation.id)
+        setVideoSeekRequest({
+          id: createId('seek'),
+          annotationId: annotation.id,
+          frameId: videoTarget.frame.id,
+          time: videoTarget.time,
+        })
+        setFrame(videoTarget.frame)
+        setSelectedFrameId(videoTarget.frame.id)
+      }
+    }
+    closeEntityMenu()
   }
 
   const removeAObjectFromEntity = (entityId, annotationId) => {
@@ -1709,7 +2117,7 @@ function App() {
     if (!entity) return
     const now = new Date().toISOString()
     const nextEntity = {
-      ...entity,
+      ...stripEntityFrameFields(entity),
       id: createId('b'),
       label: `${entity.label || 'Entity'} Copy`,
       ...createACardPatch(refsToACardTree(getEntityAObjectRefs(entity))),
@@ -1729,6 +2137,7 @@ function App() {
       id: createId('b'),
       subject: entityInput.subject,
       kind: entityInput.kind,
+      subKind: entityInput.subKind || '',
       label: entityInput.label?.trim() || 'Entity',
       ...createACardPatch(getEntityACardTree(entityInput)),
       status: 'active',
@@ -1743,18 +2152,19 @@ function App() {
   }
 
   const updateBWorkflowEntity = (entityId, patch) => {
+    const cleanPatch = stripEntityFrameFields(patch)
     const hasACardPatch = (
-      patch.aCards !== undefined ||
-      patch.aObjectRefs !== undefined ||
-      patch.aObjectIds !== undefined
+      cleanPatch.aCards !== undefined ||
+      cleanPatch.aObjectRefs !== undefined ||
+      cleanPatch.aObjectIds !== undefined
     )
     setEntities((current) => current.map((entity) => (
       entity.id === entityId
         ? {
             ...entity,
-            ...patch,
-            label: patch.label !== undefined ? patch.label?.trim() || 'Entity' : entity.label,
-            ...(hasACardPatch ? createACardPatch(getEntityACardTree(patch)) : {}),
+            ...cleanPatch,
+            label: cleanPatch.label !== undefined ? cleanPatch.label?.trim() || 'Entity' : entity.label,
+            ...(hasACardPatch ? createACardPatch(getEntityACardTree(cleanPatch)) : {}),
             updatedAt: new Date().toISOString(),
           }
         : entity
@@ -1836,20 +2246,7 @@ function App() {
       openCDocumentInNewWorkspace(result)
       return
     }
-    setPendingCompositeOpenResult(result)
-  }
-
-  const confirmCompositeOpenChoice = (mode) => {
-    const result = pendingCompositeOpenResult
-    if (!result) return
-    setPendingCompositeOpenResult(null)
-    if (mode === 'cancel') return
-    if (mode === 'new' || !activeCWorkspaceId) {
-      openCDocumentInNewWorkspace(result)
-      return
-    }
-    if (!confirmDiscardCWorkspaceChanges(activeCWorkspace)) return
-    openCDocumentInWorkspace(activeCWorkspaceId, result)
+    openCDocumentInNewWorkspace(result)
   }
 
   const reloadCDocument = async () => {
@@ -2164,8 +2561,10 @@ function App() {
         ].filter(Boolean).join(' ')}
         draggable
         key={annotation.id}
+        open={expandedAObjectId === annotation.id}
         onContextMenu={(event) => {
           event.preventDefault()
+          event.stopPropagation()
           openAObjectMenu(annotation.id, event.clientX, event.clientY)
         }}
         onDragStart={(event) => {
@@ -2178,7 +2577,9 @@ function App() {
       >
         <summary
           onClick={(event) => {
+            event.preventDefault()
             selectAnnotationFromEvent(annotation.id, event)
+            setExpandedAObjectId((current) => (current === annotation.id ? null : annotation.id))
           }}
         >
           <span>{index + 1}. {annotation.type}</span>
@@ -2189,50 +2590,10 @@ function App() {
           </small>
         </summary>
         <dl>
-          <dt>id</dt>
-          <dd>{annotation.id}</dd>
-          <dt>frameId</dt>
-          <dd>{annotation.frameId}</dd>
-          <dt>frame</dt>
-          <dd>{getAnnotationFrameLabel(annotation)}</dd>
-          <dt>frame found</dt>
-          <dd>{annotationFrame ? 'yes' : 'no'}</dd>
           <dt>time</dt>
           <dd>{Number.isFinite(annotationTime) ? formatTime(annotationTime) : '--'}</dd>
-          <dt>status</dt>
-          <dd>{annotation.status}</dd>
-          <dt>x</dt>
-          <dd>{formatGeometryValue(annotation.geometry.x)}</dd>
-          <dt>y</dt>
-          <dd>{formatGeometryValue(annotation.geometry.y)}</dd>
-          <dt>x1</dt>
-          <dd>{formatGeometryValue(annotation.geometry.x1)}</dd>
-          <dt>y1</dt>
-          <dd>{formatGeometryValue(annotation.geometry.y1)}</dd>
-          <dt>x2</dt>
-          <dd>{formatGeometryValue(annotation.geometry.x2)}</dd>
-          <dt>y2</dt>
-          <dd>{formatGeometryValue(annotation.geometry.y2)}</dd>
-          <dt>width</dt>
-          <dd>{formatGeometryValue(annotation.geometry.width)}</dd>
-          <dt>height</dt>
-          <dd>{formatGeometryValue(annotation.geometry.height)}</dd>
           <dt>text</dt>
           <dd>{annotation.text || '--'}</dd>
-          <dt>stroke</dt>
-          <dd>{annotation.style?.stroke || '--'}</dd>
-          <dt>fill</dt>
-          <dd>{annotation.style?.fill || '--'}</dd>
-          <dt>strokeWidth</dt>
-          <dd>{annotation.style?.strokeWidth ?? '--'}</dd>
-          <dt>radius</dt>
-          <dd>{annotation.style?.radius ?? '--'}</dd>
-          <dt>fontSize</dt>
-          <dd>{annotation.style?.fontSize ?? '--'}</dd>
-          <dt>createdAt</dt>
-          <dd>{annotation.createdAt || '--'}</dd>
-          <dt>updatedAt</dt>
-          <dd>{annotation.updatedAt || '--'}</dd>
           <dt>B refs</dt>
           <dd>{relatedEntities.map((entity) => `${getSubjectLabel(entity.subject)}:${getKindLabel(entity.subject, entity.kind)}`).join(', ') || '--'}</dd>
         </dl>
@@ -2341,7 +2702,15 @@ function App() {
           {annotations.length === 0 ? (
             <div className="empty-state">No annotation objects.</div>
           ) : (
-            <div className="object-list">
+            <div
+              className="object-list"
+              onBlur={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget)) return
+                window.setTimeout(() => {
+                  setExpandedAObjectId(null)
+                }, 0)
+              }}
+            >
               {annotations.map(renderAObjectRow)}
             </div>
           )}
@@ -2359,6 +2728,8 @@ function App() {
             <span>Total: <strong>{entities.length}</strong></span>
             <span>Selected Entity: <strong title={selectedEntityForInspector?.id || ''}>{selectedEntityForInspector?.label || '--'}</strong></span>
             <span>Selected A: <strong>{selectedAnnotationIds.length}</strong></span>
+            <button disabled={entities.length === 0} onClick={expandAllInspectorEntities} type="button">Expand All</button>
+            <button disabled={entities.length === 0} onClick={collapseAllInspectorEntities} type="button">Collapse All</button>
           </div>
           {entities.length === 0 ? (
             <div className="empty-state">No domain entities.</div>
@@ -2366,16 +2737,17 @@ function App() {
             <div className="entity-list">
               {entities.map((entity, index) => (
                 (() => {
-                  const validation = validateDomainEntity(entity)
-                  const ruleText = getEntityRuleText(entity)
+                  const validation = validateDomainEntity(entity, subjectSchemas)
+                  const entityTree = getEntityACardTree(entity)
                   const aObjectRefs = getEntityAObjectRefs(entity)
-                  const aObjectIds = aObjectRefs.map((ref) => ref.aObjectId)
+                  const expanded = expandedInspectorEntityIds.includes(entity.id)
 
                   return (
-                    <details
+                    <div
                       className={[
                         'entity-row',
                         entity.id === selectedEntityId ? 'selected' : '',
+                        expanded ? 'expanded' : '',
                         validation.ok ? '' : 'has-warning',
                       ].filter(Boolean).join(' ')}
                       key={entity.id}
@@ -2389,87 +2761,37 @@ function App() {
                       }}
                       title={validation.ok ? '' : validation.issues.join('\n')}
                     >
-                      <summary>
-                        <span>{index + 1}. {getSubjectLabel(entity.subject)} / {getKindLabel(entity.subject, entity.kind)} / {entity.label}</span>
-                        <small>{aObjectRefs.length} A / {validation.ok ? 'OK' : validation.issues.join('; ')}</small>
-                      </summary>
+                      <div className="entity-row-header">
+                        <button
+                          aria-label={expanded ? 'Collapse Entity' : 'Expand Entity'}
+                          className="entity-expand-button"
+                          data-tooltip={expanded ? 'Collapse' : 'Expand'}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            toggleInspectorEntityExpanded(entity.id)
+                          }}
+                          type="button"
+                        >
+                          <i className={expanded ? 'fa-solid fa-caret-down' : 'fa-solid fa-caret-right'} />
+                        </button>
+                        <div className="entity-row-summary">
+                          <span>{index + 1}. {getSubjectLabel(entity.subject)} / {getKindLabel(entity.subject, entity.kind)} / {entity.label}</span>
+                          <small>{aObjectRefs.length} A / {validation.ok ? 'OK' : validation.issues.join('; ')}</small>
+                        </div>
+                      </div>
                       {!validation.ok ? (
                         <div className="entity-warning">
                           {validation.issues.join('; ')}
                         </div>
                       ) : null}
-                      <dl>
-                        <dt>id</dt>
-                        <dd>{entity.id}</dd>
-                        <dt>subject</dt>
-                        <dd>{getSubjectLabel(entity.subject)} ({entity.subject})</dd>
-                        <dt>kind</dt>
-                        <dd>{getKindLabel(entity.subject, entity.kind)} ({entity.kind})</dd>
-                        <dt>label</dt>
-                        <dd>{entity.label}</dd>
-                        <dt>A ids</dt>
-                        <dd>{aObjectIds.join(', ') || '--'}</dd>
-                        <dt>A roles</dt>
-                        <dd>{aObjectRefs.map((ref) => `${ref.role}:${ref.aObjectId}`).join(', ') || '--'}</dd>
-                        <dt>status</dt>
-                        <dd>{entity.status}</dd>
-                        <dt>createdAt</dt>
-                        <dd>{entity.createdAt || '--'}</dd>
-                        <dt>updatedAt</dt>
-                        <dd>{entity.updatedAt || '--'}</dd>
-                      </dl>
-                      <div className="entity-rule">
-                        <div className="section-title">Rule</div>
-                        <dl>
-                          <dt>Required</dt>
-                          <dd>{ruleText.required}</dd>
-                          <dt>Optional</dt>
-                          <dd>{ruleText.optional}</dd>
-                        </dl>
-                      </div>
-                      <div className="relation-list">
-                        <div className="section-title">A Object Refs</div>
-                        {aObjectRefs.length === 0 ? (
-                          <div className="empty-state">No A object refs.</div>
-                        ) : (
-                          <div className="relation-table">
-                            <div className="relation-row relation-header">
-                              <span>Role</span>
-                              <span>A Object</span>
-                              <span>Action</span>
-                            </div>
-                            {aObjectRefs.map((ref) => {
-                              const annotation = getAnnotationById(ref.aObjectId)
-                              const roleOptions = getDomainSchema(entity.subject)?.kinds || []
-                              return (
-                                <div className="relation-row" key={ref.aObjectId}>
-                                  <select
-                                    aria-label="A object role"
-                                    onChange={(event) => updateEntityAObjectRole(entity.id, ref.aObjectId, event.target.value)}
-                                    value={ref.role}
-                                  >
-                                    {roleOptions.map((option) => (
-                                      <option key={option.value} value={option.value}>{option.label}</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    onClick={() => {
-                                      selectAnnotationsFromChild([ref.aObjectId])
-                                      setAbInspectorTab('a')
-                                    }}
-                                    title={ref.aObjectId}
-                                    type="button"
-                                  >
-                                    {annotation ? `${annotation.type}: ${getAnnotationSummary(annotation)}` : ref.aObjectId}
-                                  </button>
-                                  <button onClick={() => removeAObjectFromEntity(entity.id, ref.aObjectId)} type="button">Remove</button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </details>
+                      {expanded ? (
+                        <div className="inspector-entity-tree-wrap">
+                          {entityTree.length === 0 ? (
+                            <div className="empty-state">No A object refs.</div>
+                          ) : renderInspectorEntityTreeNodes(entityTree, entity)}
+                        </div>
+                      ) : null}
+                    </div>
                   )
                 })()
               ))}
@@ -2707,6 +3029,7 @@ function App() {
             repairRequestId={compositeRepairRequestId}
             selectedBIndexItemKey={activeCWorkspace.selectedBIndexItemKey}
             selectedCItemId={activeCWorkspace.selectedCItemId}
+            subjectSchemas={subjectSchemas}
           />
         ) : (
           <div className="ab-workspace">
@@ -2740,6 +3063,8 @@ function App() {
               onEditTextAnnotation={startEditTextAnnotation}
               onExportSelectedAnnotationCrop={exportSingleAnnotationCrop}
               onExportSelectedEntity={exportEntityCrops}
+              canGoToAnnotation={(annotation) => Boolean(annotation && getAnnotationVideoTarget(annotation))}
+              onGoToAnnotation={(annotation) => seekVideoToAnnotation(annotation)}
               onImageSizeChange={setImageSize}
               onLayoutStateChange={updateActiveEditorLayoutState}
               onOpenAddToEntityDialog={openAddToEntityDialog}
@@ -2760,6 +3085,7 @@ function App() {
               previewAnnotationId={previewAnnotationId}
               selectedEntity={selectedEntityForInspector}
               source={source}
+              subjectSchemas={subjectSchemas}
               textDraft={textDraft}
               toolMode={toolMode}
               updateTextDraft={setTextDraft}
@@ -2818,32 +3144,44 @@ function App() {
       ) : null}
 
       {entityMenu ? (
-        <div
-          className="context-menu"
-          onContextMenu={(event) => event.preventDefault()}
-          style={{
-            left: entityMenu.x,
-            top: entityMenu.y,
-          }}
-        >
-          <button onClick={() => openEntityDialog()} type="button">New Entity...</button>
-          {entityMenu.entityId ? (
-            <>
-              <button onClick={() => editEntityInWorkflow(entityMenu.entityId)} type="button">Edit In Workflow</button>
-              <button onClick={() => openEntityDialog({ entityId: entityMenu.entityId })} type="button">Edit Entity...</button>
-              <button onClick={() => duplicateBEntity(entityMenu.entityId)} type="button">Duplicate Entity</button>
-              <button onClick={() => deleteBEntity(entityMenu.entityId)} type="button">Delete Entity</button>
-            </>
-          ) : null}
-          <div className="context-menu-separator" />
-          <button onClick={closeEntityMenu} type="button">Cancel</button>
-        </div>
+        (() => {
+          const entity = entities.find((item) => item.id === entityMenu.entityId)
+          const firstAnnotation = entity ? getFirstEntityAnnotation(entity) : null
+          const canGoToEntity = Boolean(firstAnnotation && (
+            getAnnotationVideoTarget(firstAnnotation) || getEntityDefaultFrame(entity)
+          ))
+          return (
+            <div
+              className="context-menu"
+              onContextMenu={(event) => event.preventDefault()}
+              style={{
+                left: entityMenu.x,
+                top: entityMenu.y,
+              }}
+            >
+              <button onClick={() => openEntityDialog()} type="button">New Entity...</button>
+              {entityMenu.entityId ? (
+                <>
+                  <button disabled={!canGoToEntity} onClick={() => goToEntityFromMenu(entityMenu.entityId)} type="button">Go To</button>
+                  <button onClick={() => editEntityInWorkflow(entityMenu.entityId)} type="button">Edit In Workflow</button>
+                  <button onClick={() => openEntityDialog({ entityId: entityMenu.entityId })} type="button">Edit Entity...</button>
+                  <button onClick={() => duplicateBEntity(entityMenu.entityId)} type="button">Duplicate Entity</button>
+                  <button onClick={() => deleteBEntity(entityMenu.entityId)} type="button">Delete Entity</button>
+                </>
+              ) : null}
+              <div className="context-menu-separator" />
+              <button onClick={closeEntityMenu} type="button">Cancel</button>
+            </div>
+          )
+        })()
       ) : null}
 
       {addToEntityDialog ? (
         (() => {
           const entity = entities.find((item) => item.id === addToEntityDialog.entityId)
-          const schema = getDomainSchema(entity?.subject)
+          const schema = getDomainSchema(entity?.subject, subjectSchemas)
+          const roleOptions = getDomainRolesForKind(schema, entity?.kind)
+          const roleMissing = addToEntityDialog.role && !roleOptions.some((option) => option.value === addToEntityDialog.role)
 
           return (
             <div className="dialog-layer">
@@ -2862,7 +3200,10 @@ function App() {
                     onChange={(event) => setAddToEntityDialog((current) => ({ ...current, role: event.target.value }))}
                     value={addToEntityDialog.role}
                   >
-                    {(schema?.kinds || []).map((option) => (
+                    {roleMissing ? (
+                      <option value={addToEntityDialog.role}>{addToEntityDialog.role} (invalid)</option>
+                    ) : null}
+                    {roleOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
@@ -2875,50 +3216,6 @@ function App() {
             </div>
           )
         })()
-      ) : null}
-
-      {pendingEditorOpenInput ? (
-        <div className="dialog-layer">
-          <div className="entity-dialog">
-            <div className="dialog-title">Open Target</div>
-            <dl className="dialog-info">
-              <dt>Current</dt>
-              <dd>{source?.fileName || '--'}</dd>
-              <dt>Target</dt>
-              <dd>{getInputTitle(pendingEditorOpenInput)}</dd>
-            </dl>
-            <div className="dialog-message">
-              Choose where to open this source.
-            </div>
-            <div className="dialog-actions">
-              <button onClick={() => confirmEditorOpenChoice('here')} type="button">Open Here</button>
-              <button onClick={() => confirmEditorOpenChoice('new')} type="button">Open New</button>
-              <button onClick={() => confirmEditorOpenChoice('cancel')} type="button">Cancel</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {pendingCompositeOpenResult ? (
-        <div className="dialog-layer">
-          <div className="entity-dialog">
-            <div className="dialog-title">Open Composite</div>
-            <dl className="dialog-info">
-              <dt>Current</dt>
-              <dd>{activeCWorkspace.cDocument?.title || '--'}</dd>
-              <dt>Target</dt>
-              <dd>{getPathFileName(pendingCompositeOpenResult.filePath)}</dd>
-            </dl>
-            <div className="dialog-message">
-              Choose where to open this Composite document.
-            </div>
-            <div className="dialog-actions">
-              <button onClick={() => confirmCompositeOpenChoice('here')} type="button">Open Here</button>
-              <button onClick={() => confirmCompositeOpenChoice('new')} type="button">Open New</button>
-              <button onClick={() => confirmCompositeOpenChoice('cancel')} type="button">Cancel</button>
-            </div>
-          </div>
-        </div>
       ) : null}
 
       {pendingEditorCloseSessionId ? (
@@ -3019,6 +3316,48 @@ function App() {
         })()
       ) : null}
 
+      {settingsDialog ? (
+        <div className="dialog-layer">
+          <div className="entity-dialog settings-dialog">
+            <div className="dialog-title">Settings</div>
+            <section className="settings-section">
+              <h3>Frame</h3>
+              <label>
+                Frame timestamp tolerance
+                <div className="settings-inline-field">
+                  <input
+                    autoFocus
+                    min="0"
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      setSettingsDialog((current) => ({
+                        ...current,
+                        draft: {
+                          ...current.draft,
+                          frameTimestampToleranceSeconds: Number.isFinite(value) ? value : '',
+                        },
+                      }))
+                    }}
+                    step="0.01"
+                    type="number"
+                    value={settingsDialog.draft.frameTimestampToleranceSeconds}
+                  />
+                  <span>seconds</span>
+                </div>
+              </label>
+              <small>
+                Frames within this time distance are treated as the same video frame.
+              </small>
+            </section>
+            {settingsDialog.error ? <div className="dialog-message error">{settingsDialog.error}</div> : null}
+            <div className="dialog-actions">
+              <button onClick={saveSettingsDialog} type="button">Save</button>
+              <button onClick={() => setSettingsDialog(null)} type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {entityDialog ? (
         <div className="dialog-layer">
           <div className="entity-dialog">
@@ -3031,7 +3370,7 @@ function App() {
                 onChange={(event) => updateEntityDialogSubject(event.target.value)}
                 value={entityDialog.subject}
               >
-                {DOMAIN_SCHEMAS.map((schema) => (
+                {subjectSchemas.map((schema) => (
                   <option key={schema.id} value={schema.id}>{schema.label}</option>
                 ))}
               </select>
@@ -3039,10 +3378,37 @@ function App() {
             <label>
               Kind
               <select
-                onChange={(event) => setEntityDialog((current) => ({ ...current, kind: event.target.value }))}
+                onChange={(event) => updateEntityDialogKind(event.target.value)}
                 value={entityDialog.kind}
               >
-                {(getDomainSchema(entityDialog.subject)?.kinds || []).map((option) => (
+                {(() => {
+                  const schema = getDomainSchema(entityDialog.subject, subjectSchemas)
+                  return entityDialog.kind && !schema.kinds.some((option) => option.value === entityDialog.kind)
+                    ? <option value={entityDialog.kind}>{entityDialog.kind} (invalid)</option>
+                    : null
+                })()}
+                {(getDomainSchema(entityDialog.subject, subjectSchemas)?.kinds || []).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              SubKind
+              <select
+                onChange={(event) => setEntityDialog((current) => ({ ...current, subKind: event.target.value }))}
+                value={entityDialog.subKind || ''}
+              >
+                <option value="">--</option>
+                {(() => {
+                  const schema = getDomainSchema(entityDialog.subject, subjectSchemas)
+                  const subKinds = getDomainKind(schema, entityDialog.kind)?.subKinds || []
+                  return entityDialog.subKind && !subKinds.some((option) => option.value === entityDialog.subKind)
+                    ? <option value={entityDialog.subKind}>{entityDialog.subKind} (invalid)</option>
+                    : null
+                })()}
+                {(
+                  getDomainKind(getDomainSchema(entityDialog.subject, subjectSchemas), entityDialog.kind)?.subKinds || []
+                ).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 1,
+  "subjectId": "english-experimental",
+  "label": "英语-实验版",
+  "description": "面向初高中英语教学、词汇短语、句型句式、翻译、写作、发音和语法语用的简化主题语义模型。除翻译练习外，其它 Kind 使用 default 角色；特征属性沿用基础部分和关键词部分。",
+  "version": "0.1.0",
+  "entityKinds": [
+    {
+      "value": "wordPhrase",
+      "label": "单词短语",
+      "description": "单词、短语、固定搭配、词义、用法和例句。",
+      "subKinds": [
+        {
+          "value": "word",
+          "label": "单词"
+        },
+        {
+          "value": "phrase",
+          "label": "短语"
+        }
+      ]
+    },
+    {
+      "value": "sentencePattern",
+      "label": "句型句式",
+      "description": "句型、句式、表达框架、结构模板和典型例句。"
+    },
+    {
+      "value": "translation",
+      "label": "翻译中英",
+      "description": "中英表达、译文对照、翻译策略和中英差异。"
+    },
+    {
+      "value": "translationTask",
+      "label": "翻译练习",
+      "description": "用于训练或讲评的翻译练习，包含原文和译文。"
+    },
+    {
+      "value": "writing",
+      "label": "写作表达",
+      "description": "写作素材、表达优化、衔接、修辞和语篇组织。"
+    },
+    {
+      "value": "pronunciation",
+      "label": "发音变音",
+      "description": "音标、连读、弱读、变音、多音和发音规则。"
+    },
+    {
+      "value": "grammarUsage",
+      "label": "语法语用",
+      "description": "语法现象、语用差异、结构分析、规则和例外。"
+    }
+  ],
+  "rolesByKind": {
+    "wordPhrase": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "sentencePattern": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "translation": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "translationTask": [
+      {
+        "value": "original",
+        "label": "原文",
+        "required": true
+      },
+      {
+        "value": "translation",
+        "label": "译文",
+        "required": false
+      }
+    ],
+    "writing": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "pronunciation": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ],
+    "grammarUsage": [
+      {
+        "value": "default",
+        "label": "默认",
+        "required": true
+      }
+    ]
+  },
+  "featureGroups": [
+    {
+      "key": "source",
+      "label": "来源",
+      "section": "basic",
+      "multi": false,
+      "values": [
+        {
+          "value": "textbook",
+          "label": "教材"
+        },
+        {
+          "value": "exerciseBook",
+          "label": "教辅"
+        },
+        {
+          "value": "exam",
+          "label": "真题/模拟题"
+        },
+        {
+          "value": "teacherHandout",
+          "label": "教师讲义"
+        },
+        {
+          "value": "studentNote",
+          "label": "学生笔记"
+        },
+        {
+          "value": "videoCourse",
+          "label": "视频课程"
+        },
+        {
+          "value": "dictionary",
+          "label": "词典"
+        },
+        {
+          "value": "other",
+          "label": "其它"
+        }
+      ]
+    },
+    {
+      "key": "textbookSection",
+      "label": "课本章节",
+      "section": "basic",
+      "multi": true,
+      "values": [
+        {
+          "value": "vocabulary",
+          "label": "词汇"
+        },
+        {
+          "value": "grammar",
+          "label": "语法"
+        },
+        {
+          "value": "reading",
+          "label": "阅读"
+        },
+        {
+          "value": "translation",
+          "label": "翻译"
+        },
+        {
+          "value": "writing",
+          "label": "写作"
+        },
+        {
+          "value": "listening",
+          "label": "听力"
+        },
+        {
+          "value": "speaking",
+          "label": "口语"
+        },
+        {
+          "value": "review",
+          "label": "复习"
+        }
+      ]
+    },
+    {
+      "key": "knowledgePoint",
+      "label": "知识点",
+      "section": "basic",
+      "multi": true,
+      "inputMode": "manual",
+      "values": []
+    },
+    {
+      "key": "type",
+      "label": "类型",
+      "section": "basic",
+      "multi": false,
+      "values": [
+        {
+          "value": "singleChoice",
+          "label": "单选"
+        },
+        {
+          "value": "multipleChoice",
+          "label": "多选"
+        },
+        {
+          "value": "blank",
+          "label": "填空"
+        },
+        {
+          "value": "correction",
+          "label": "改错"
+        },
+        {
+          "value": "translation",
+          "label": "翻译"
+        },
+        {
+          "value": "writing",
+          "label": "写作"
+        },
+        {
+          "value": "reading",
+          "label": "阅读"
+        },
+        {
+          "value": "listening",
+          "label": "听力"
+        },
+        {
+          "value": "speaking",
+          "label": "口语"
+        },
+        {
+          "value": "other",
+          "label": "其它"
+        }
+      ]
+    },
+    {
+      "key": "difficulty",
+      "label": "难度",
+      "section": "basic",
+      "multi": false,
+      "values": [
+        {
+          "value": "basic",
+          "label": "基础"
+        },
+        {
+          "value": "medium",
+          "label": "中档"
+        },
+        {
+          "value": "advanced",
+          "label": "拔高"
+        },
+        {
+          "value": "errorProne",
+          "label": "易错"
+        }
+      ]
+    },
+    {
+      "key": "keyword",
+      "label": "关键词",
+      "section": "keyword",
+      "multi": true,
+      "inputMode": "manual",
+      "values": []
+    }
+  ],
+  "relationTypes": [
+    {
+      "value": "translationOf",
+      "label": "翻译对应"
+    },
+    {
+      "value": "grammarOf",
+      "label": "语法分析自"
+    },
+    {
+      "value": "exampleOf",
+      "label": "例句属于"
+    },
+    {
+      "value": "explains",
+      "label": "解释"
+    },
+    {
+      "value": "confusableWith",
+      "label": "易混淆"
+    },
+    {
+      "value": "samePatternAs",
+      "label": "同句型"
+    },
+    {
+      "value": "rewrittenFrom",
+      "label": "改写自"
+    }
+  ],
+  "validationRules": [
+    {
+      "id": "english-experimental-entity-min-a-object",
+      "type": "minAObjectCount",
+      "level": "error",
+      "min": 1,
+      "message": "英语 Entity 至少需要包含一个 A 标记。"
+    },
+    {
+      "id": "english-experimental-translation-task-required-original",
+      "type": "requiredRole",
+      "level": "error",
+      "kind": "translationTask",
+      "role": "original",
+      "message": "翻译练习必须包含原文。"
+    }
+  ],
+  "uiHints": {
+    "defaultKind": "wordPhrase",
+    "defaultLabel": "英语 Entity",
+    "kindDisplayOrder": [
+      "wordPhrase",
+      "sentencePattern",
+      "translation",
+      "translationTask",
+      "writing",
+      "pronunciation",
+      "grammarUsage"
+    ],
+    "featureGroupDisplayOrder": [
+      "source",
+      "textbookSection",
+      "knowledgePoint",
+      "type",
+      "difficulty",
+      "keyword"
+    ],
+    "primaryFeatureGroups": [
+      "source",
+      "textbookSection",
+      "knowledgePoint",
+      "type",
+      "difficulty"
+    ]
+  }
+}
