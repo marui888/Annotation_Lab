@@ -5,6 +5,7 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	openVideo: () => electron.ipcRenderer.invoke("file:openVideo"),
 	loadImageByPath: (filePath) => electron.ipcRenderer.invoke("file:loadImageByPath", filePath),
 	openAnnotationFile: () => electron.ipcRenderer.invoke("annotation:openFile"),
+	importSimpleNotes: () => electron.ipcRenderer.invoke("annotation:importSimpleNotes"),
 	readAnnotationFileRaw: (annotationFilePath) => electron.ipcRenderer.invoke("annotation:readRawByPath", annotationFilePath),
 	loadAnnotationFileByPath: (annotationFilePath) => electron.ipcRenderer.invoke("annotation:loadFileByPath", annotationFilePath),
 	saveAnnotationFileRaw: (payload) => electron.ipcRenderer.invoke("annotation:saveRawByPath", payload),
@@ -32,6 +33,7 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	deleteSubjectSchema: (filePath) => electron.ipcRenderer.invoke("schema:delete", filePath),
 	saveSubjectSchema: (payload) => electron.ipcRenderer.invoke("schema:save", payload),
 	saveSubjectSchemaAs: (payload) => electron.ipcRenderer.invoke("schema:saveAs", payload),
+	openSchemaEditor: () => electron.ipcRenderer.invoke("schema:openEditor"),
 	readSettings: () => electron.ipcRenderer.invoke("settings:read"),
 	saveSettings: (settings) => electron.ipcRenderer.invoke("settings:save", settings),
 	onOpenSettings: (callback) => {

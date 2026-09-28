@@ -12,6 +12,7 @@ import {
   saveAnnotationDocument,
 } from './renderer/ab-editor/abEditorLoader'
 import { createAnnotationExportTask } from './renderer/ab-editor/exportCropRect'
+import { registerActions, runAction, subscribeActions } from './renderer/actions/actionRegistry'
 import { createId } from './renderer/core/id'
 import { createVideoFrame } from './renderer/media/videoAdapter'
 import {
@@ -46,14 +47,46 @@ import {
   normalizeSubjectSchemas,
   validateDomainEntity,
 } from './renderer/domain/domainSchemas'
+import {
+  createSimpleNote,
+  formatSimpleNoteTime,
+  getSimpleNoteImportKey,
+  importOldSimpleNotes,
+  normalizeSimpleNoteRange,
+  normalizeSimpleNotes,
+  parseTimeText,
+} from './renderer/domain/simpleNotes'
 import { captureVideoFrameSnapshot } from './renderer/media/videoFrameSnapshot'
+import useShortcutManager, { formatShortcutEvent } from './renderer/hooks/useShortcutManager'
 import './App.css'
 
-const RECENT_IMAGES_KEY = 'annotationLab.recentImages'
-const MAX_RECENT_IMAGES = 20
+const RECENT_FILES_KEY = 'annotationLab.recentFiles'
+const LEGACY_RECENT_IMAGES_KEY = 'annotationLab.recentImages'
+const MAX_RECENT_FILES = 20
 const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
 const DEFAULT_APP_SETTINGS = {
   frameTimestampToleranceSeconds: 0.1,
+  shortcuts: {
+    video: {
+      'video.playPause': 'Space',
+      'video.longBack': 'Ctrl+ArrowLeft',
+      'video.longForward': 'Ctrl+ArrowRight',
+      'video.simpleNote.setStart': 'F2',
+      'video.simpleNote.setEnd': 'F3',
+      'video.simpleNote.appendQuickMark': 'Ctrl+S',
+      'video.simpleNote.quickUpdateRange': 'Ctrl+G',
+      'video.simpleNote.writeCurrentRange': 'Ctrl+W',
+    },
+    picture: {
+      'picture.previous': '',
+      'picture.next': '',
+    },
+    pdf: {},
+    global: {
+      'global.openSettings': '',
+      'global.openSchemaEditor': '',
+    },
+  },
 }
 const LEFT_PANEL_DEFAULT_WIDTH = 180
 const LEFT_PANEL_MIN_WIDTH = 132
@@ -79,7 +112,44 @@ const AB_INSPECTOR_TABS = [
   { id: 'frame', icon: 'fa-solid fa-film', label: 'Frames' },
   { id: 'a', icon: 'fa-solid fa-vector-square', label: 'A Objects' },
   { id: 'b', icon: 'fa-solid fa-layer-group', label: 'B Entities' },
+  { id: 'simpleNotes', icon: 'fa-solid fa-note-sticky', label: 'SimpleNotes' },
 ]
+
+const SETTINGS_MAIN_TABS = [
+  { id: 'general', label: 'General' },
+  { id: 'shortcuts', label: 'Shortcuts' },
+]
+
+const SETTINGS_SHORTCUT_TABS = [
+  { id: 'video', label: 'Video' },
+  { id: 'picture', label: 'Picture' },
+  { id: 'pdf', label: 'PDF' },
+  { id: 'global', label: 'Global' },
+]
+
+function getShortcutConflicts(shortcuts) {
+  const conflicts = {}
+  Object.entries(shortcuts || {}).forEach(([scope, rows]) => {
+    const shortcutToActions = {}
+    Object.entries(rows || {}).forEach(([actionId, shortcut]) => {
+      const value = typeof shortcut === 'string' ? shortcut.trim() : ''
+      if (!value) return
+      if (!shortcutToActions[value]) shortcutToActions[value] = []
+      shortcutToActions[value].push(actionId)
+    })
+
+    conflicts[scope] = new Set(
+      Object.values(shortcutToActions)
+        .filter((actionIds) => actionIds.length > 1)
+        .flat()
+    )
+  })
+
+  return conflicts
+}
+
+const IMAGE_FILE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'])
+const VIDEO_FILE_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv'])
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 
@@ -91,6 +161,24 @@ const normalizeAppSettings = (settings = {}) => {
     frameTimestampToleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0
       ? tolerance
       : DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds,
+    shortcuts: {
+      video: {
+        ...DEFAULT_APP_SETTINGS.shortcuts.video,
+        ...(settings.shortcuts?.video || {}),
+      },
+      picture: {
+        ...DEFAULT_APP_SETTINGS.shortcuts.picture,
+        ...(settings.shortcuts?.picture || {}),
+      },
+      pdf: {
+        ...DEFAULT_APP_SETTINGS.shortcuts.pdf,
+        ...(settings.shortcuts?.pdf || {}),
+      },
+      global: {
+        ...DEFAULT_APP_SETTINGS.shortcuts.global,
+        ...(settings.shortcuts?.global || {}),
+      },
+    },
   }
 }
 
@@ -98,6 +186,32 @@ const getPathFileName = (filePath = '') => {
   const parts = String(filePath).split(/[\\/]/)
   return parts[parts.length - 1] || filePath || 'Empty'
 }
+
+const getPathExtension = (filePath = '') => {
+  const fileName = getPathFileName(filePath).toLowerCase()
+  const index = fileName.lastIndexOf('.')
+  return index >= 0 ? fileName.slice(index) : ''
+}
+
+const getSimpleNoteImportBaseName = (filePath = '') => (
+  getPathFileName(filePath)
+    .replace(/\.json$/i, '')
+    .replace(/\.annotation$/i, '')
+    .replace(/\.(mp4|webm|mov|m4v|mkv)$/i, '')
+)
+
+const inferRecentFileKind = (filePath = '', savedKind = '') => {
+  const extension = getPathExtension(filePath)
+  if (VIDEO_FILE_EXTENSIONS.has(extension)) return 'video'
+  if (IMAGE_FILE_EXTENSIONS.has(extension)) return 'image'
+  return savedKind === 'video' || savedKind === 'image' ? savedKind : 'image'
+}
+
+const normalizeRecentFileItem = (item = {}) => ({
+  ...item,
+  kind: inferRecentFileKind(item.filePath, item.kind),
+  fileName: item.fileName || getPathFileName(item.filePath),
+})
 
 const getInputTitle = (input) => (
   input?.fileInfo?.fileName || getPathFileName(input?.sourcePath || input?.annotationPath) || 'Empty'
@@ -129,6 +243,17 @@ const createEmptyEditorSession = (overrides = {}) => ({
   zoom: 1,
   toolMode: 'select',
   annotations: [],
+  simpleNotes: [],
+  selectedSimpleNoteId: null,
+  simpleNoteDraft: '',
+  curStart: '',
+  curEnd: '',
+  videoPlaybackInfo: {
+    currentTime: 0,
+    duration: null,
+    state: 'Paused',
+    status: 'Ready',
+  },
   selectedAnnotationIds: [],
   annotationFilePath: '',
   saveStatus: 'Not saved',
@@ -315,7 +440,9 @@ function sanitizeEntityForPersistence(entity = {}) {
 
 function App() {
   const pendingPreviewFrameIdsRef = useRef(new Set())
+  const actionHandlersRef = useRef({})
   const appSettingsRef = useRef(DEFAULT_APP_SETTINGS)
+  const simpleNoteListRef = useRef(null)
   const [source, setSource] = useState(null)
   const [frame, setFrame] = useState(null)
   const [frames, setFrames] = useState([])
@@ -328,6 +455,20 @@ function App() {
   const [zoom, setZoom] = useState(1)
   const [toolMode, setToolMode] = useState('select')
   const [annotations, setAnnotations] = useState([])
+  const [simpleNotes, setSimpleNotes] = useState([])
+  const [selectedSimpleNoteId, setSelectedSimpleNoteId] = useState(null)
+  const [simpleNoteDraft, setSimpleNoteDraft] = useState('')
+  const [simpleNoteFilter, setSimpleNoteFilter] = useState('')
+  const [simpleNoteReverse, setSimpleNoteReverse] = useState(false)
+  const [curStart, setCurStart] = useState('')
+  const [curEnd, setCurEnd] = useState('')
+  const [abMediaBottomTab, setAbMediaBottomTab] = useState('aPreview')
+  const [videoPlaybackInfo, setVideoPlaybackInfo] = useState({
+    currentTime: 0,
+    duration: null,
+    state: 'Paused',
+    status: 'Ready',
+  })
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState([])
   const [lastPreviewAnnotationId, setLastPreviewAnnotationId] = useState(null)
   const [annotationFilePath, setAnnotationFilePath] = useState('')
@@ -336,10 +477,16 @@ function App() {
   const [textDraft, setTextDraft] = useState('')
   const [leftTab, setLeftTab] = useState('entityFiles')
   const [abInspectorTab, setAbInspectorTab] = useState('source')
-  const [recentImages, setRecentImages] = useState(() => {
+  const [recentFiles, setRecentFiles] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(RECENT_IMAGES_KEY) || '[]')
-      return Array.isArray(saved) ? saved : []
+      const saved = JSON.parse(localStorage.getItem(RECENT_FILES_KEY) || '[]')
+      if (Array.isArray(saved) && saved.length > 0) {
+        return saved.map(normalizeRecentFileItem)
+      }
+      const legacy = JSON.parse(localStorage.getItem(LEGACY_RECENT_IMAGES_KEY) || '[]')
+      return Array.isArray(legacy)
+        ? legacy.map(normalizeRecentFileItem)
+        : []
     } catch {
       return []
     }
@@ -350,6 +497,7 @@ function App() {
   const [entityMenu, setEntityMenu] = useState(null)
   const [aObjectMenu, setAObjectMenu] = useState(null)
   const [frameMenu, setFrameMenu] = useState(null)
+  const [simpleNoteMenu, setSimpleNoteMenu] = useState(null)
   const [expandedAObjectId, setExpandedAObjectId] = useState(null)
   const [expandedInspectorEntityIds, setExpandedInspectorEntityIds] = useState([])
   const [entityDialog, setEntityDialog] = useState(null)
@@ -370,6 +518,8 @@ function App() {
   const [bindFrameDialogPosition, setBindFrameDialogPosition] = useState(null)
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS)
   const [settingsDialog, setSettingsDialog] = useState(null)
+  const [registeredActions, setRegisteredActions] = useState([])
+  const [pendingShortcutCapture, setPendingShortcutCapture] = useState(null)
   const [bindFrameDialogDrag, setBindFrameDialogDrag] = useState(null)
   const [videoSeekRequest, setVideoSeekRequest] = useState(null)
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH)
@@ -415,7 +565,6 @@ function App() {
     : createEmptyCWorkspace({ cSaveStatus: 'Not saved' })
   const firstCWorkspace = cWorkspaceEntries[0]?.[1] || null
   const visibleCWorkspace = activeCWorkspaceId ? activeCWorkspace : firstCWorkspace || createEmptyCWorkspace({ cSaveStatus: 'Not saved' })
-
   useEffect(() => {
     let canceled = false
     window.labApi?.listSubjectSchemas?.().then(async (listResult) => {
@@ -442,6 +591,8 @@ function App() {
   useEffect(() => {
     appSettingsRef.current = appSettings
   }, [appSettings])
+
+  useEffect(() => subscribeActions(setRegisteredActions), [])
 
   useEffect(() => {
     let canceled = false
@@ -484,8 +635,17 @@ function App() {
     })),
   ]
 
-  const saveSettingsDialog = async () => {
+  const saveSettingsDialog = async ({ close = false } = {}) => {
     if (!settingsDialog) return
+    const shortcutConflicts = getShortcutConflicts(settingsDialog.draft.shortcuts)
+    const hasConflicts = Object.values(shortcutConflicts).some((items) => items.size > 0)
+    if (hasConflicts) {
+      setSettingsDialog((current) => ({
+        ...current,
+        error: 'Shortcut conflict',
+      }))
+      return
+    }
     const nextSettings = normalizeAppSettings(settingsDialog.draft)
     const result = await window.labApi?.saveSettings?.(nextSettings)
     if (!result?.ok) {
@@ -496,12 +656,141 @@ function App() {
       return
     }
     setAppSettings(normalizeAppSettings(result.settings))
-    setSettingsDialog(null)
+    if (close) {
+      setSettingsDialog(null)
+      return
+    }
+    setSettingsDialog((current) => current
+      ? {
+          ...current,
+          draft: normalizeAppSettings(result.settings),
+          error: '',
+        }
+      : current)
+  }
+
+  const patchSettingsDraft = (patch) => {
+    setSettingsDialog((current) => current
+      ? {
+          ...current,
+          draft: {
+            ...current.draft,
+            ...patch,
+          },
+        }
+      : current)
+  }
+
+  const setShortcutDraftValue = (scope, actionId, value) => {
+    setPendingShortcutCapture(null)
+    setSettingsDialog((current) => current
+      ? {
+          ...current,
+          error: '',
+          draft: {
+            ...current.draft,
+            shortcuts: {
+              ...current.draft.shortcuts,
+              [scope]: {
+                ...(current.draft.shortcuts?.[scope] || {}),
+                [actionId]: value,
+              },
+            },
+          },
+        }
+      : current)
+  }
+
+  const captureShortcutDraftValue = (scope, actionId, shortcut) => {
+    setSettingsDialog((current) => {
+      if (!current) return current
+
+      if (
+        scope === 'global'
+        && pendingShortcutCapture?.scope === scope
+        && pendingShortcutCapture?.actionId === actionId
+      ) {
+        setPendingShortcutCapture(null)
+        return {
+          ...current,
+          error: '',
+          draft: {
+            ...current.draft,
+            shortcuts: {
+              ...current.draft.shortcuts,
+              [scope]: {
+                ...(current.draft.shortcuts?.[scope] || {}),
+                [actionId]: `${pendingShortcutCapture.shortcut} ${shortcut}`,
+              },
+            },
+          },
+        }
+      }
+
+      if (scope === 'global' && shortcut.includes('+')) {
+        setPendingShortcutCapture({ scope, actionId, shortcut })
+        return {
+          ...current,
+          error: 'Press second key for chord shortcut',
+          draft: {
+            ...current.draft,
+            shortcuts: {
+              ...current.draft.shortcuts,
+              [scope]: {
+                ...(current.draft.shortcuts?.[scope] || {}),
+                [actionId]: shortcut,
+              },
+            },
+          },
+        }
+      }
+
+      setPendingShortcutCapture(null)
+      return {
+        ...current,
+        error: '',
+        draft: {
+          ...current.draft,
+          shortcuts: {
+            ...current.draft.shortcuts,
+            [scope]: {
+              ...(current.draft.shortcuts?.[scope] || {}),
+              [actionId]: shortcut,
+            },
+          },
+        },
+      }
+    })
+  }
+
+  const cancelShortcutCapture = () => {
+    setPendingShortcutCapture(null)
+    setSettingsDialog((current) => current ? { ...current, error: '' } : current)
+  }
+
+  const openSettingsDialog = () => {
+    setSettingsDialog({
+      draft: normalizeAppSettings(appSettingsRef.current),
+      error: '',
+      filePath: '',
+    })
   }
 
   const activeWorkspaceTab = workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId)
     || workspaceTabs.find((tab) => tab.id === editorWorkspace.activeId)
     || workspaceTabs[0]
+
+  const activeShortcutScope = activeWorkspaceTab?.type === 'ab'
+    ? source?.kind === 'video'
+      ? 'video'
+      : source?.kind === 'image'
+        ? 'picture'
+        : source?.kind === 'pdf'
+          ? 'pdf'
+          : 'global'
+    : 'global'
+
+  useShortcutManager(activeShortcutScope, appSettings.shortcuts, Boolean(settingsDialog))
 
   const updateCWorkspace = (workspaceId, updater) => {
     setCWorkspaces((current) => {
@@ -670,23 +959,25 @@ function App() {
     setLeftPanelCollapsed(true)
   }
 
-  const saveRecentImages = (items) => {
-    setRecentImages(items)
-    localStorage.setItem(RECENT_IMAGES_KEY, JSON.stringify(items))
+  const saveRecentFiles = (items) => {
+    const normalizedItems = items.map(normalizeRecentFileItem)
+    setRecentFiles(normalizedItems)
+    localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(normalizedItems))
   }
 
-  const rememberRecentImage = (imageResult) => {
-    if (!imageResult?.filePath) return
+  const rememberRecentFile = (fileResult, kind = 'image') => {
+    if (!fileResult?.filePath) return
     const nextItem = {
-      filePath: imageResult.filePath,
-      fileName: imageResult.fileName,
+      kind: inferRecentFileKind(fileResult.filePath, kind),
+      filePath: fileResult.filePath,
+      fileName: fileResult.fileName,
       openedAt: new Date().toISOString(),
     }
     const nextItems = [
       nextItem,
-      ...recentImages.filter((item) => item.filePath !== imageResult.filePath),
-    ].slice(0, MAX_RECENT_IMAGES)
-    saveRecentImages(nextItems)
+      ...recentFiles.filter((item) => item.filePath !== fileResult.filePath),
+    ].slice(0, MAX_RECENT_FILES)
+    saveRecentFiles(nextItems)
   }
 
   const buildCurrentEditorSessionSnapshot = (overrides = {}) => ({
@@ -705,6 +996,13 @@ function App() {
     zoom,
     toolMode,
     annotations,
+    simpleNotes,
+    selectedSimpleNoteId,
+    simpleNoteDraft,
+    curStart,
+    curEnd,
+    abMediaBottomTab,
+    videoPlaybackInfo,
     selectedAnnotationIds,
     annotationFilePath,
     saveStatus,
@@ -736,6 +1034,18 @@ function App() {
     setZoom(session.zoom || 1)
     setToolMode(session.toolMode || 'select')
     setAnnotations(sessionAnnotations)
+    setSimpleNotes(normalizeSimpleNotes(session.simpleNotes || []))
+    setSelectedSimpleNoteId(session.selectedSimpleNoteId || null)
+    setSimpleNoteDraft(session.simpleNoteDraft || '')
+    setCurStart(session.curStart || '')
+    setCurEnd(session.curEnd || '')
+    setAbMediaBottomTab(session.abMediaBottomTab || 'aPreview')
+    setVideoPlaybackInfo(session.videoPlaybackInfo || {
+      currentTime: 0,
+      duration: null,
+      state: 'Paused',
+      status: 'Ready',
+    })
     setSelectedAnnotationIds(session.selectedAnnotationIds || [])
     setAnnotationFilePath(session.annotationFilePath || '')
     setSaveStatus(session.saveStatus || 'Not saved')
@@ -750,6 +1060,7 @@ function App() {
     setEntityMenu(null)
     setAObjectMenu(null)
     setFrameMenu(null)
+    setSimpleNoteMenu(null)
     setEntityDialog(null)
     setAddToEntityDialog(null)
   }
@@ -780,6 +1091,7 @@ function App() {
       sources: session.source ? [session.source] : [],
       frames: normalized.frames,
       annotations: normalized.annotations,
+      simpleNotes: normalizeSimpleNotes(session.simpleNotes || []),
       entities: (session.entities || []).map((entity) => sanitizeEntityForPersistence(entity)),
       collections: [],
     }
@@ -957,6 +1269,18 @@ function App() {
     setToolMode('select')
     setSelectedFrameId(sessionFrame?.id || null)
     setSelectedAnnotationIds([])
+    setSimpleNotes(normalizeSimpleNotes(session.simpleNotes || []))
+    setSelectedSimpleNoteId(null)
+    setSimpleNoteDraft('')
+    setCurStart('')
+    setCurEnd('')
+    setAbMediaBottomTab('aPreview')
+    setVideoPlaybackInfo({
+      currentTime: 0,
+      duration: null,
+      state: 'Paused',
+      status: 'Ready',
+    })
     setEditingTextId(null)
     setEntityMenu(null)
     setAObjectMenu(null)
@@ -966,11 +1290,15 @@ function App() {
     setSelectedEntityId(targetEntity?.id || null)
     setAnnotationFilePath(session.annotationFilePath)
     setAnnotations(sessionAnnotations)
+    const sessionSimpleNotes = normalizeSimpleNotes(session.simpleNotes || [])
+    setSimpleNotes(sessionSimpleNotes)
     setEntities(sessionEntities)
     setSaveStatus(session.saveStatus)
     setCurrentABInput(session.input)
     setPendingABInput(null)
-    if (session.input?.fileInfo) rememberRecentImage(session.input.fileInfo)
+    if (session.input?.fileInfo && (session.source?.kind === 'image' || session.source?.kind === 'video')) {
+      rememberRecentFile(session.input.fileInfo, session.source.kind)
+    }
   }
 
   const requestLoadABInput = (input) => {
@@ -1030,6 +1358,206 @@ function App() {
   const requestPlayPauseVideo = () => {
     if (source?.kind !== 'video') return
     setPlayPauseRequestId((current) => current + 1)
+  }
+
+  const getCurrentVideoTime = () => {
+    const time = Number(videoPlaybackInfo.currentTime)
+    return Number.isFinite(time) ? time : 0
+  }
+
+  const buildCurrentSimpleNoteRange = () => (
+    normalizeSimpleNoteRange({
+      start: curStart || formatSimpleNoteTime(getCurrentVideoTime()),
+      end: curEnd || formatSimpleNoteTime(getCurrentVideoTime() + 2),
+    })
+  )
+
+  const selectSimpleNote = (noteId) => {
+    const note = simpleNotes.find((item) => item.id === noteId) || null
+    setSelectedSimpleNoteId(note?.id || null)
+    setSimpleNoteDraft(note?.content || '')
+    if (note) setAbMediaBottomTab('simpleNote')
+  }
+
+  const setSimpleNoteStartFromPlayback = () => {
+    if (source?.kind !== 'video') return
+    setCurStart(formatSimpleNoteTime(getCurrentVideoTime()))
+  }
+
+  const setSimpleNoteEndFromPlayback = () => {
+    if (source?.kind !== 'video') return
+    setCurEnd(formatSimpleNoteTime(getCurrentVideoTime()))
+  }
+
+  const appendSimpleNoteMark = ({ quick = false } = {}) => {
+    if (source?.kind !== 'video') return
+    const range = quick
+      ? normalizeSimpleNoteRange({
+          start: formatSimpleNoteTime(getCurrentVideoTime()),
+          end: formatSimpleNoteTime(getCurrentVideoTime() + 2),
+        })
+      : buildCurrentSimpleNoteRange()
+    if (!range) {
+      setMessage('Append SimpleNote failed: invalid current range.')
+      return
+    }
+
+    const note = createSimpleNote({
+      ...range,
+      content: quick ? 'None' : simpleNoteDraft,
+      createdBy: 'User',
+    })
+    if (!note) return
+    setSimpleNotes((current) => [...current, note])
+    setSelectedSimpleNoteId(note.id)
+    setSimpleNoteDraft(note.content)
+    setCurStart(note.start)
+    setCurEnd(note.end)
+    setAbInspectorTab('simpleNotes')
+    setSaveStatus('Unsaved')
+  }
+
+  const quickUpdateSimpleNoteRange = () => {
+    if (!selectedSimpleNoteId) {
+      setMessage('No SimpleNote selected.')
+      return
+    }
+    const range = normalizeSimpleNoteRange({
+      start: formatSimpleNoteTime(getCurrentVideoTime()),
+      end: formatSimpleNoteTime(getCurrentVideoTime() + 2),
+    })
+    if (!range) return
+    setSimpleNotes((current) => current.map((note) => (
+      note.id === selectedSimpleNoteId
+        ? { ...note, ...range, updatedAt: new Date().toISOString() }
+        : note
+    )))
+    setCurStart(range.start)
+    setCurEnd(range.end)
+    setSaveStatus('Unsaved')
+  }
+
+  const writeCurrentRangeToSimpleNote = () => {
+    if (!selectedSimpleNoteId) {
+      setMessage('No SimpleNote selected.')
+      return
+    }
+    const range = normalizeSimpleNoteRange({ start: curStart, end: curEnd })
+    if (!range) {
+      setMessage('Write Current Range failed: invalid curStart / curEnd.')
+      return
+    }
+    setSimpleNotes((current) => current.map((note) => (
+      note.id === selectedSimpleNoteId
+        ? { ...note, ...range, updatedAt: new Date().toISOString() }
+        : note
+    )))
+    setSaveStatus('Unsaved')
+  }
+
+  const updateSimpleNoteContent = () => {
+    if (!selectedSimpleNoteId) {
+      setMessage('No SimpleNote selected.')
+      return
+    }
+    setSimpleNotes((current) => current.map((note) => (
+      note.id === selectedSimpleNoteId
+        ? { ...note, content: simpleNoteDraft, updatedAt: new Date().toISOString() }
+        : note
+    )))
+    setSaveStatus('Unsaved')
+  }
+
+  const deleteSimpleNote = (noteId = selectedSimpleNoteId) => {
+    if (!noteId) return
+    if (!window.confirm('Delete this SimpleNote?')) return
+    setSimpleNotes((current) => current.filter((note) => note.id !== noteId))
+    if (selectedSimpleNoteId === noteId) {
+      setSelectedSimpleNoteId(null)
+      setSimpleNoteDraft('')
+    }
+    setSaveStatus('Unsaved')
+  }
+
+  const goToSimpleNote = (noteId = selectedSimpleNoteId) => {
+    const note = simpleNotes.find((item) => item.id === noteId)
+    if (!note || source?.kind !== 'video') return
+    const time = parseTimeText(note.start)
+    if (!Number.isFinite(time)) {
+      setMessage('SimpleNote GO TO failed: invalid start time.')
+      return
+    }
+    selectSimpleNote(note.id)
+    setVideoSeekRequest({
+      id: createId('seek'),
+      annotationId: null,
+      frameId: frame?.id || '',
+      time,
+    })
+  }
+
+  const importVideoNotes = async () => {
+    if (source?.kind !== 'video') {
+      setMessage('Import is only available for video source.')
+      return
+    }
+
+    const result = await window.labApi?.importSimpleNotes?.()
+    if (!result?.ok) {
+      if (!result?.canceled) setMessage(`Import failed: ${result?.reason || 'unknown error'}`)
+      return
+    }
+
+    const sourceBaseName = getSimpleNoteImportBaseName(source.filePath)
+    const importBaseName = getSimpleNoteImportBaseName(result.filePath)
+    if (sourceBaseName && importBaseName && sourceBaseName !== importBaseName) {
+      const reason = `Import failed: file name mismatch. Current video is "${sourceBaseName}", import file is "${importBaseName}".`
+      window.alert(reason)
+      setMessage(reason)
+      return
+    }
+
+    const importedResult = importOldSimpleNotes(result.data, result.filePath)
+    if (importedResult.imported.length === 0) {
+      setMessage(`Import: no valid item imported. Skipped ${importedResult.skipped}/${importedResult.total}.`)
+      return
+    }
+
+    const existingKeys = new Set(simpleNotes.map(getSimpleNoteImportKey))
+    const duplicateCount = importedResult.imported.filter((note) => existingKeys.has(getSimpleNoteImportKey(note))).length
+    let notesToAppend = importedResult.imported
+    if (duplicateCount > 0) {
+      const allowDuplicate = window.confirm(`Found ${duplicateCount} SimpleNote(s) imported before. Import them again?`)
+      if (!allowDuplicate) {
+        notesToAppend = importedResult.imported.filter((note) => !existingKeys.has(getSimpleNoteImportKey(note)))
+      }
+    }
+
+    if (notesToAppend.length === 0) {
+      setMessage(`Import canceled for ${duplicateCount} duplicate SimpleNote(s).`)
+      return
+    }
+
+    setSimpleNotes((current) => [...current, ...notesToAppend])
+    const firstImported = notesToAppend[0]
+    setSelectedSimpleNoteId(firstImported.id)
+    setSimpleNoteDraft(firstImported.content)
+    setCurStart(firstImported.start)
+    setCurEnd(firstImported.end)
+    setAbInspectorTab('simpleNotes')
+    setAbMediaBottomTab('simpleNote')
+    setSaveStatus('Unsaved')
+    setMessage(`Imported ${notesToAppend.length} SimpleNote(s). Skipped ${importedResult.skipped + importedResult.imported.length - notesToAppend.length}.`)
+  }
+
+  const seekCurrentVideoBy = (deltaSeconds) => {
+    if (source?.kind !== 'video') return
+    setVideoSeekRequest({
+      id: createId('seek'),
+      annotationId: null,
+      frameId: frame?.id || '',
+      time: Math.max(0, getCurrentVideoTime() + deltaSeconds),
+    })
   }
 
   const useVideoFrame = (nextFrame, videoSize = {}, previewUrl = '', options = {}) => {
@@ -1141,7 +1669,34 @@ function App() {
     })
   }
 
-  const openRecentImage = (filePath) => openImageByPath(filePath)
+  const openVideoByPath = (filePath) => {
+    setMessage('')
+    requestLoadABInput({
+      kind: 'video',
+      sourcePath: filePath,
+      annotationPath: '',
+      entityId: '',
+    })
+  }
+
+  const openRecentFile = (item) => {
+    const kind = inferRecentFileKind(item?.filePath, item?.kind)
+    if (kind === 'video') {
+      openVideoByPath(item.filePath)
+      return
+    }
+    openImageByPath(item?.filePath)
+  }
+
+  const openRelativeImageFromFolder = (delta) => {
+    if (source?.kind !== 'image' || imageFolderItems.length === 0) return
+    const currentIndex = imageFolderItems.findIndex((item) => item.filePath === source.filePath)
+    if (currentIndex < 0) return
+    const nextIndex = clamp(currentIndex + delta, 0, imageFolderItems.length - 1)
+    const nextItem = imageFolderItems[nextIndex]
+    if (!nextItem || nextItem.filePath === source.filePath) return
+    openImageByPath(nextItem.filePath)
+  }
 
   const confirmPendingImageSwitch = async (mode) => {
     const target = pendingImageSwitch
@@ -1481,6 +2036,7 @@ function App() {
       sources: source ? [source] : [],
       frames: normalized.frames,
       annotations: normalized.annotations,
+      simpleNotes: normalizeSimpleNotes(simpleNotes),
       entities: entities.map((entity) => sanitizeEntityForPersistence(entity)),
       collections: [],
     }
@@ -1500,6 +2056,72 @@ function App() {
     setSaveStatus(`Save failed: ${result?.reason || 'unknown error'}`)
     return false
   }
+
+  actionHandlersRef.current = {
+    appendSimpleNoteMark,
+    changeZoom,
+    deleteSelectedAnnotation,
+    deleteSimpleNote,
+    goToSimpleNote,
+    importVideoNotes,
+    openAnnotation,
+    openImage,
+    openRelativeImageFromFolder,
+    openSettingsDialog,
+    openVideo,
+    quickUpdateSimpleNoteRange,
+    requestPlayPauseVideo,
+    saveAnnotations,
+    seekCurrentVideoBy,
+    setActualSizeZoom,
+    setFitZoom,
+    setSimpleNoteEndFromPlayback,
+    setSimpleNoteStartFromPlayback,
+    setToolMode,
+    updateSimpleNoteContent,
+    writeCurrentRangeToSimpleNote,
+  }
+
+  useEffect(() => {
+    const unregister = registerActions([
+      { id: 'ab.aObject.goTo', handler: () => actionHandlersRef.current.goToAObjectFromMenu?.() },
+      { id: 'ab.frame.goTo', handler: () => actionHandlersRef.current.goToFrameFromMenu?.() },
+      { id: 'ab.entity.goTo', handler: () => actionHandlersRef.current.goToEntityFromMenu?.() },
+      { id: 'global.openSettings', handler: () => actionHandlersRef.current.openSettingsDialog?.() },
+      { id: 'global.openSchemaEditor', handler: () => window.labApi?.openSchemaEditor?.() },
+      { id: 'picture.openImage', handler: () => actionHandlersRef.current.openImage?.() },
+      { id: 'picture.openAnnotation', handler: () => actionHandlersRef.current.openAnnotation?.() },
+      { id: 'picture.saveJson', handler: () => actionHandlersRef.current.saveAnnotations?.() },
+      { id: 'picture.previous', handler: () => actionHandlersRef.current.openRelativeImageFromFolder?.(-1) },
+      { id: 'picture.next', handler: () => actionHandlersRef.current.openRelativeImageFromFolder?.(1) },
+      { id: 'picture.tool.select', handler: () => actionHandlersRef.current.setToolMode?.('select') },
+      { id: 'picture.tool.rect', handler: () => actionHandlersRef.current.setToolMode?.('rect') },
+      { id: 'picture.tool.arrow', handler: () => actionHandlersRef.current.setToolMode?.('arrow') },
+      { id: 'picture.tool.text', handler: () => actionHandlersRef.current.setToolMode?.('text') },
+      { id: 'picture.deleteSelected', handler: () => actionHandlersRef.current.deleteSelectedAnnotation?.() },
+      { id: 'picture.zoom.fit', handler: () => actionHandlersRef.current.setFitZoom?.() },
+      { id: 'picture.zoom.actual', handler: () => actionHandlersRef.current.setActualSizeZoom?.() },
+      { id: 'picture.zoom.out', handler: () => actionHandlersRef.current.changeZoom?.(-0.1) },
+      { id: 'picture.zoom.in', handler: () => actionHandlersRef.current.changeZoom?.(0.1) },
+      { id: 'video.openVideo', handler: () => actionHandlersRef.current.openVideo?.() },
+      { id: 'video.openAnnotation', handler: () => actionHandlersRef.current.openAnnotation?.() },
+      { id: 'video.saveJson', handler: () => actionHandlersRef.current.saveAnnotations?.() },
+      { id: 'video.playPause', handler: () => actionHandlersRef.current.requestPlayPauseVideo?.() },
+      { id: 'video.longBack', handler: () => actionHandlersRef.current.seekCurrentVideoBy?.(-10) },
+      { id: 'video.longForward', handler: () => actionHandlersRef.current.seekCurrentVideoBy?.(10) },
+      { id: 'video.simpleNote.setStart', handler: () => actionHandlersRef.current.setSimpleNoteStartFromPlayback?.() },
+      { id: 'video.simpleNote.setEnd', handler: () => actionHandlersRef.current.setSimpleNoteEndFromPlayback?.() },
+      { id: 'video.simpleNote.appendMark', handler: () => actionHandlersRef.current.appendSimpleNoteMark?.() },
+      { id: 'video.simpleNote.appendQuickMark', handler: () => actionHandlersRef.current.appendSimpleNoteMark?.({ quick: true }) },
+      { id: 'video.simpleNote.quickUpdateRange', handler: () => actionHandlersRef.current.quickUpdateSimpleNoteRange?.() },
+      { id: 'video.simpleNote.writeCurrentRange', handler: () => actionHandlersRef.current.writeCurrentRangeToSimpleNote?.() },
+      { id: 'video.simpleNote.updateContent', handler: () => actionHandlersRef.current.updateSimpleNoteContent?.() },
+      { id: 'video.simpleNote.goTo', handler: () => actionHandlersRef.current.goToSimpleNote?.() },
+      { id: 'video.simpleNote.delete', handler: () => actionHandlersRef.current.deleteSimpleNote?.() },
+      { id: 'video.simpleNote.import', handler: () => actionHandlersRef.current.importVideoNotes?.() },
+    ])
+    return unregister
+  }, [])
 
   const chooseExportFolder = async () => {
     const result = await window.labApi?.chooseExportFolder?.()
@@ -1714,9 +2336,49 @@ function App() {
       : null
   const selectedFrameForInspector = frames.find((item) => item.id === selectedFrameId) || null
   const selectedEntityForInspector = entities.find((entity) => entity.id === selectedEntityId) || null
+  const selectedSimpleNote = simpleNotes.find((note) => note.id === selectedSimpleNoteId) || null
+  const simpleNoteFilterText = simpleNoteFilter.trim().toLowerCase()
+  const filteredSimpleNotes = simpleNotes
+    .map((note, index) => ({ note, index }))
+    .filter(({ note }) => (
+      !simpleNoteFilterText
+      || String(note.content || '').toLowerCase().includes(simpleNoteFilterText)
+    ))
+  const visibleSimpleNotes = simpleNoteReverse
+    ? [...filteredSimpleNotes].reverse()
+    : filteredSimpleNotes
+  const getSimpleNoteDurationLabel = (note) => {
+    const startSeconds = parseTimeText(note?.start)
+    const endSeconds = parseTimeText(note?.end)
+    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)) return '--'
+    const duration = Math.max(0, endSeconds - startSeconds)
+    return `+${duration.toFixed(1)}s`
+  }
+  const moveSelectedSimpleNote = (delta) => {
+    if (visibleSimpleNotes.length === 0) return
+    const currentIndex = visibleSimpleNotes.findIndex(({ note }) => note.id === selectedSimpleNoteId)
+    const fallbackIndex = delta > 0 ? -1 : visibleSimpleNotes.length
+    const nextIndex = Math.max(
+      0,
+      Math.min(visibleSimpleNotes.length - 1, (currentIndex >= 0 ? currentIndex : fallbackIndex) + delta),
+    )
+    selectSimpleNote(visibleSimpleNotes[nextIndex].note.id)
+  }
+
+  const handleSimpleNoteListKeyDown = (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    moveSelectedSimpleNote(event.key === 'ArrowDown' ? 1 : -1)
+  }
   const getCompactId = (id) => (
     id ? `${String(id).slice(0, 8)}...` : '--'
   )
+
+  useEffect(() => {
+    if (abInspectorTab !== 'simpleNotes' || !selectedSimpleNoteId) return
+    const selectedRow = simpleNoteListRef.current?.querySelector(`[data-simple-note-id="${selectedSimpleNoteId}"]`)
+    selectedRow?.scrollIntoView({ block: 'nearest' })
+  }, [abInspectorTab, selectedSimpleNoteId, simpleNoteFilterText])
 
   useEffect(() => {
     setExpandedInspectorEntityIds((current) => (
@@ -2066,6 +2728,10 @@ function App() {
     }
     closeEntityMenu()
   }
+
+  actionHandlersRef.current.goToAObjectFromMenu = goToAObjectFromMenu
+  actionHandlersRef.current.goToFrameFromMenu = goToFrameFromMenu
+  actionHandlersRef.current.goToEntityFromMenu = () => goToEntityFromMenu(entityMenu?.entityId)
 
   const removeAObjectFromEntity = (entityId, annotationId) => {
     setEntities((current) => current.map((entity) => (
@@ -2617,7 +3283,7 @@ function App() {
           </button>
         ))}
       </nav>
-      <div className="ab-inspector-content">
+      <div className={abInspectorTab === 'simpleNotes' ? 'ab-inspector-content simple-notes-active' : 'ab-inspector-content'}>
         {abInspectorTab === 'source' ? <section className="panel-section">
           <div className="section-title">Source</div>
           {source ? (
@@ -2798,6 +3464,85 @@ function App() {
             </div>
           )}
         </section> : null}
+
+        {abInspectorTab === 'simpleNotes' ? <section className="panel-section simple-note-panel">
+          <div className="section-title">SimpleNotes</div>
+          <div className="inspector-status-row">
+            <span>Total: <strong>{simpleNotes.length}</strong></span>
+            <span>Visible: <strong>{visibleSimpleNotes.length}</strong></span>
+            <span>At: <strong>{selectedSimpleNote ? simpleNotes.findIndex((note) => note.id === selectedSimpleNote.id) + 1 : '--'}</strong></span>
+            <button disabled={source?.kind !== 'video'} onClick={() => runAction('video.simpleNote.import')} type="button">Import...</button>
+            <label className="simple-note-reverse-toggle">
+              <input
+                checked={simpleNoteReverse}
+                onChange={(event) => setSimpleNoteReverse(event.target.checked)}
+                type="checkbox"
+              />
+              <span>Reverse</span>
+            </label>
+          </div>
+          <label className="simple-note-filter">
+            <span>Filter</span>
+            <input
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => setSimpleNoteFilter(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
+              placeholder="Content contains..."
+              type="text"
+              value={simpleNoteFilter}
+            />
+          </label>
+          {simpleNotes.length === 0 ? (
+            <div className="empty-state">No SimpleNotes.</div>
+          ) : visibleSimpleNotes.length === 0 ? (
+            <div className="empty-state">No SimpleNote matches.</div>
+          ) : (
+            <ul
+              aria-label="SimpleNotes"
+              className="simple-note-list"
+              onKeyDown={handleSimpleNoteListKeyDown}
+              ref={simpleNoteListRef}
+              tabIndex={0}
+            >
+              {visibleSimpleNotes.map(({ note, index }) => (
+                <li
+                  className={[
+                    'simple-note-row',
+                    note.id === selectedSimpleNoteId ? 'selected' : '',
+                  ].filter(Boolean).join(' ')}
+                  data-simple-note-id={note.id}
+                  key={note.id}
+                  onClick={() => {
+                    selectSimpleNote(note.id)
+                    simpleNoteListRef.current?.focus()
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    selectSimpleNote(note.id)
+                    simpleNoteListRef.current?.focus()
+                    setFrameMenu(null)
+                    setAObjectMenu(null)
+                    setEntityMenu(null)
+                    setSimpleNoteMenu({
+                      noteId: note.id,
+                      x: event.clientX,
+                      y: event.clientY,
+                    })
+                  }}
+                  title={note.id}
+                >
+                  <div className="simple-note-row-head">
+                    <strong>{index + 1}. {note.start || '--'} {getSimpleNoteDurationLabel(note)}</strong>
+                    {note.importFile ? <em title={[note.importFile, note.importTime].filter(Boolean).join('\n')}>Import</em> : null}
+                  </div>
+                  <small className="simple-note-row-content">{note.content || 'Empty content'}</small>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section> : null}
       </div>
     </>
   )
@@ -2830,37 +3575,37 @@ function App() {
         <div className="side-panel-content">
         {leftTab === 'entityFiles' ? (
           <>
-            <button className="primary-button" onClick={openImage} type="button">
+            <button className="primary-button" onClick={() => runAction('picture.openImage')} type="button">
               Open Image
             </button>
-            <button className="primary-button" onClick={openVideo} type="button">
+            <button className="primary-button" onClick={() => runAction('video.openVideo')} type="button">
               Open Video
             </button>
-            <button disabled={activeWorkspaceTab.type !== 'ab' || source?.kind !== 'video'} onClick={requestPlayPauseVideo} type="button">
+            <button disabled={activeWorkspaceTab.type !== 'ab' || source?.kind !== 'video'} onClick={() => runAction('video.playPause')} type="button">
               Play / Pause
             </button>
-            <button onClick={openAnnotation} type="button">
+            <button onClick={() => runAction(source?.kind === 'video' ? 'video.openAnnotation' : 'picture.openAnnotation')} type="button">
               Open JSON
             </button>
-            <button disabled={!source || saveStatus !== 'Unsaved'} onClick={saveAnnotations} type="button">
+            <button disabled={!source || saveStatus !== 'Unsaved'} onClick={() => runAction(source?.kind === 'video' ? 'video.saveJson' : 'picture.saveJson')} type="button">
               Save JSON
             </button>
 
             <section className="panel-section">
               <div className="section-title">A Layer</div>
-              <button className={toolMode === 'select' ? 'active-tool' : ''} onClick={() => setToolMode('select')} type="button">Select</button>
-              <button className={toolMode === 'rect' ? 'active-tool' : ''} onClick={() => setToolMode('rect')} type="button">Rect</button>
-              <button className={toolMode === 'arrow' ? 'active-tool' : ''} onClick={() => setToolMode('arrow')} type="button">Arrow</button>
-              <button className={toolMode === 'text' ? 'active-tool' : ''} onClick={() => setToolMode('text')} type="button">Text</button>
-              <button disabled={selectedAnnotationIds.length === 0} onClick={deleteSelectedAnnotation} type="button">Delete</button>
+              <button className={toolMode === 'select' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.select')} type="button">Select</button>
+              <button className={toolMode === 'rect' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.rect')} type="button">Rect</button>
+              <button className={toolMode === 'arrow' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.arrow')} type="button">Arrow</button>
+              <button className={toolMode === 'text' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.text')} type="button">Text</button>
+              <button disabled={selectedAnnotationIds.length === 0} onClick={() => runAction('picture.deleteSelected')} type="button">Delete</button>
             </section>
 
             <section className="panel-section">
               <div className="section-title">View</div>
-              <button onClick={setFitZoom} type="button">Fit</button>
-              <button onClick={setActualSizeZoom} type="button">100%</button>
-              <button onClick={() => changeZoom(-0.1)} type="button">Zoom Out</button>
-              <button onClick={() => changeZoom(0.1)} type="button">Zoom In</button>
+              <button onClick={() => runAction('picture.zoom.fit')} type="button">Fit</button>
+              <button onClick={() => runAction('picture.zoom.actual')} type="button">100%</button>
+              <button onClick={() => runAction('picture.zoom.out')} type="button">Zoom Out</button>
+              <button onClick={() => runAction('picture.zoom.in')} type="button">Zoom In</button>
             </section>
 
             <section className="panel-section">
@@ -2931,19 +3676,20 @@ function App() {
           </section>
         ) : (
           <section className="panel-section recent-panel">
-            <div className="section-title">Recent Images</div>
-            {recentImages.length === 0 ? (
-              <div className="empty-state">No recent image.</div>
+            <div className="section-title">Recent Files</div>
+            {recentFiles.length === 0 ? (
+              <div className="empty-state">No recent file.</div>
             ) : (
               <div className="recent-list">
-                {recentImages.map((item) => (
+                {recentFiles.map((item) => (
                   <button
                     key={item.filePath}
-                    onDoubleClick={() => openRecentImage(item.filePath)}
+                    onDoubleClick={() => openRecentFile(item)}
                     title={item.filePath}
                     type="button"
                   >
-                    {item.fileName}
+                    <span>{item.fileName}</span>
+                    <small>{item.kind || 'image'}</small>
                   </button>
                 ))}
               </div>
@@ -3053,6 +3799,9 @@ function App() {
               initialInput={pendingABInput}
               isDirty={saveStatus === 'Unsaved'}
               layoutState={editorWorkspace.sessions.find((session) => session.id === editorWorkspace.activeId)?.layoutState}
+              curEnd={curEnd}
+              curStart={curStart}
+              mediaBottomTab={abMediaBottomTab}
               onAddAnnotation={addAnnotation}
               onAddTextAnnotation={addTextAnnotation}
               onBindCurrentVideoFrame={openBindFrameConfirmDialog}
@@ -3060,15 +3809,27 @@ function App() {
               onClearSelection={clearSelection}
               onCreateEntity={createBWorkflowEntity}
               onDeleteSelectedAnnotations={deleteSelectedAnnotation}
+              onDeleteSimpleNote={deleteSimpleNote}
               onEditTextAnnotation={startEditTextAnnotation}
               onExportSelectedAnnotationCrop={exportSingleAnnotationCrop}
               onExportSelectedEntity={exportEntityCrops}
+              onAppendSimpleNote={() => appendSimpleNoteMark()}
+              onAppendQuickSimpleNote={() => appendSimpleNoteMark({ quick: true })}
+              onQuickUpdateSimpleNoteRange={quickUpdateSimpleNoteRange}
+              onSetSimpleNoteEnd={setSimpleNoteEndFromPlayback}
+              onSetSimpleNoteStart={setSimpleNoteStartFromPlayback}
+              onUpdateSimpleNoteContent={updateSimpleNoteContent}
+              onVideoPlaybackInfo={setVideoPlaybackInfo}
+              onVideoSeekBy={seekCurrentVideoBy}
+              onWriteCurrentRangeToSimpleNote={writeCurrentRangeToSimpleNote}
               canGoToAnnotation={(annotation) => Boolean(annotation && getAnnotationVideoTarget(annotation))}
               onGoToAnnotation={(annotation) => seekVideoToAnnotation(annotation)}
               onImageSizeChange={setImageSize}
               onLayoutStateChange={updateActiveEditorLayoutState}
               onOpenAddToEntityDialog={openAddToEntityDialog}
               onOpenEntityDialog={openEntityDialog}
+              onRequestPlayPauseVideo={requestPlayPauseVideo}
+              onMediaBottomTabChange={setAbMediaBottomTab}
               onSelectAnnotation={selectAnnotationFromEvent}
               onSelectAnnotations={selectAnnotationsFromChild}
               onSessionLoadError={handleABSessionLoadError}
@@ -3082,13 +3843,18 @@ function App() {
               showBindFrameOverlay={Boolean(pendingBindFrame)}
               saveStatus={saveStatus}
               selectedAnnotationIds={selectedAnnotationIds}
+              selectedSimpleNote={selectedSimpleNote}
+              simpleNoteDraft={simpleNoteDraft}
+              simpleNotes={simpleNotes}
               previewAnnotationId={previewAnnotationId}
               selectedEntity={selectedEntityForInspector}
               source={source}
               subjectSchemas={subjectSchemas}
               textDraft={textDraft}
               toolMode={toolMode}
+              updateSimpleNoteDraft={setSimpleNoteDraft}
               updateTextDraft={setTextDraft}
+              videoPlaybackInfo={videoPlaybackInfo}
               videoSeekRequest={videoSeekRequest}
               zoom={zoom}
               zoomMode={zoomMode}
@@ -3111,7 +3877,7 @@ function App() {
                 top: aObjectMenu.y,
               }}
             >
-              <button disabled={!canGoTo} onClick={goToAObjectFromMenu} type="button">Go To</button>
+              <button disabled={!canGoTo} onClick={() => runAction('ab.aObject.goTo')} type="button">Go To</button>
               <button disabled={!canBindToCurrentFrame} onClick={() => {
                 requestBindSelectedAnnotationsToCurrentPlaybackFrame()
                 closeAObjectMenu()
@@ -3137,10 +3903,38 @@ function App() {
             top: frameMenu.y,
           }}
         >
-          <button onClick={goToFrameFromMenu} type="button">Go To Frame</button>
+          <button onClick={() => runAction('ab.frame.goTo')} type="button">Go To Frame</button>
           <div className="context-menu-separator" />
           <button onClick={closeFrameMenu} type="button">Cancel</button>
         </div>
+      ) : null}
+
+      {simpleNoteMenu ? (
+        (() => {
+          const note = simpleNotes.find((item) => item.id === simpleNoteMenu.noteId)
+          const canGoTo = Boolean(source?.kind === 'video' && note?.start)
+          return (
+            <div
+              className="context-menu"
+              onContextMenu={(event) => event.preventDefault()}
+              style={{
+                left: simpleNoteMenu.x,
+                top: simpleNoteMenu.y,
+              }}
+            >
+              <button disabled={!canGoTo} onClick={() => {
+                runAction('video.simpleNote.goTo')
+                setSimpleNoteMenu(null)
+              }} type="button">GO TO</button>
+              <button onClick={() => {
+                runAction('video.simpleNote.delete')
+                setSimpleNoteMenu(null)
+              }} type="button">Delete</button>
+              <div className="context-menu-separator" />
+              <button onClick={() => setSimpleNoteMenu(null)} type="button">Cancel</button>
+            </div>
+          )
+        })()
       ) : null}
 
       {entityMenu ? (
@@ -3162,7 +3956,7 @@ function App() {
               <button onClick={() => openEntityDialog()} type="button">New Entity...</button>
               {entityMenu.entityId ? (
                 <>
-                  <button disabled={!canGoToEntity} onClick={() => goToEntityFromMenu(entityMenu.entityId)} type="button">Go To</button>
+                  <button disabled={!canGoToEntity} onClick={() => runAction('ab.entity.goTo')} type="button">Go To</button>
                   <button onClick={() => editEntityInWorkflow(entityMenu.entityId)} type="button">Edit In Workflow</button>
                   <button onClick={() => openEntityDialog({ entityId: entityMenu.entityId })} type="button">Edit Entity...</button>
                   <button onClick={() => duplicateBEntity(entityMenu.entityId)} type="button">Duplicate Entity</button>
@@ -3317,45 +4111,176 @@ function App() {
       ) : null}
 
       {settingsDialog ? (
-        <div className="dialog-layer">
-          <div className="entity-dialog settings-dialog">
-            <div className="dialog-title">Settings</div>
-            <section className="settings-section">
-              <h3>Frame</h3>
-              <label>
-                Frame timestamp tolerance
-                <div className="settings-inline-field">
-                  <input
-                    autoFocus
-                    min="0"
-                    onChange={(event) => {
-                      const value = Number(event.target.value)
-                      setSettingsDialog((current) => ({
-                        ...current,
-                        draft: {
-                          ...current.draft,
-                          frameTimestampToleranceSeconds: Number.isFinite(value) ? value : '',
-                        },
-                      }))
-                    }}
-                    step="0.01"
-                    type="number"
-                    value={settingsDialog.draft.frameTimestampToleranceSeconds}
-                  />
-                  <span>seconds</span>
+        (() => {
+          const mainTab = settingsDialog.mainTab || 'general'
+          const shortcutTab = settingsDialog.shortcutTab || 'video'
+          const shortcutConflicts = getShortcutConflicts(settingsDialog.draft.shortcuts)
+          const visibleShortcutActions = registeredActions
+            .filter((action) => action.scope === shortcutTab)
+            .map((action) => ({
+              ...action,
+              shortcut: settingsDialog.draft.shortcuts?.[shortcutTab]?.[action.id] || '',
+            }))
+          const shortcutGroups = shortcutTab === 'global'
+            ? [
+                {
+                  title: 'Normal Shortcuts',
+                  rows: visibleShortcutActions.filter((action) => !String(action.shortcut || '').includes(' ')),
+                },
+                {
+                  title: 'Chord Shortcuts',
+                  rows: visibleShortcutActions.filter((action) => String(action.shortcut || '').includes(' ')),
+                },
+              ]
+            : [{ title: '', rows: visibleShortcutActions }]
+          const renderShortcutRow = (action) => (
+            <label
+              className={shortcutConflicts[shortcutTab]?.has(action.id)
+                ? 'settings-shortcut-row conflict'
+                : 'settings-shortcut-row'}
+              key={action.id}
+            >
+              <span>
+                <strong>{action.label}</strong>
+                <small>{action.description || action.id}</small>
+              </span>
+              <div className="settings-shortcut-input-wrap">
+                <input
+                  onChange={() => {}}
+                  onKeyDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (event.key === 'Backspace' || event.key === 'Delete') {
+                      setShortcutDraftValue(shortcutTab, action.id, '')
+                      return
+                    }
+                    if (event.key === 'Escape') {
+                      cancelShortcutCapture()
+                      return
+                    }
+                    const shortcut = formatShortcutEvent(event)
+                    if (shortcut) captureShortcutDraftValue(shortcutTab, action.id, shortcut)
+                  }}
+                  placeholder={pendingShortcutCapture?.scope === shortcutTab && pendingShortcutCapture?.actionId === action.id
+                    ? 'Press second key...'
+                    : 'Click and press keys'}
+                  value={action.shortcut || ''}
+                />
+                <button onClick={() => setShortcutDraftValue(shortcutTab, action.id, '')} type="button">Clear</button>
+              </div>
+            </label>
+          )
+          return (
+            <div className="dialog-layer settings-dialog-layer">
+              <section className="settings-dialog" aria-label="Global settings">
+                <div className="settings-main">
+                  <div className="settings-main-tabs" role="tablist" aria-label="Settings tabs">
+                    {SETTINGS_MAIN_TABS.map((tab) => (
+                      <button
+                        className={mainTab === tab.id ? 'settings-tab active' : 'settings-tab'}
+                        key={tab.id}
+                        onClick={() => setSettingsDialog((current) => ({ ...current, mainTab: tab.id }))}
+                        type="button"
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="settings-tab-page">
+                    {mainTab === 'general' ? (
+                      <div className="settings-general-sections">
+                        <section className="settings-section">
+                          <div className="settings-section-title">Common</div>
+                          <div className="settings-form-grid">
+                            <label htmlFor="settings-frame-tolerance">Frame timestamp tolerance</label>
+                            <div className="settings-unit-row">
+                              <input
+                                autoFocus
+                                id="settings-frame-tolerance"
+                                min="0"
+                                onChange={(event) => {
+                                  const value = Number(event.target.value)
+                                  patchSettingsDraft({
+                                    frameTimestampToleranceSeconds: Number.isFinite(value) ? value : '',
+                                  })
+                                }}
+                                step="0.01"
+                                type="number"
+                                value={settingsDialog.draft.frameTimestampToleranceSeconds}
+                              />
+                              <span>seconds</span>
+                            </div>
+                          </div>
+                          <small>
+                            Frames within this time distance are treated as the same video frame.
+                          </small>
+                        </section>
+
+                        <section className="settings-section">
+                          <div className="settings-section-title">Video</div>
+                          <div className="settings-empty compact">No video-only settings yet.</div>
+                        </section>
+
+                        <section className="settings-section">
+                          <div className="settings-section-title">Picture</div>
+                          <div className="settings-empty compact">No picture-only settings yet.</div>
+                        </section>
+
+                        <section className="settings-section">
+                          <div className="settings-section-title">PDF</div>
+                          <div className="settings-empty compact">No PDF-only settings yet.</div>
+                        </section>
+                      </div>
+                    ) : null}
+
+                    {mainTab === 'shortcuts' ? (
+                      <div className="settings-shortcuts">
+                        <div className="settings-shortcut-tabs" role="tablist" aria-label="Shortcut scopes">
+                          {SETTINGS_SHORTCUT_TABS.map((tab) => (
+                            <button
+                              className={shortcutTab === tab.id ? 'settings-tab active' : 'settings-tab'}
+                              key={tab.id}
+                              onClick={() => setSettingsDialog((current) => ({ ...current, shortcutTab: tab.id }))}
+                              type="button"
+                            >
+                              {tab.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="settings-shortcut-page">
+                          {visibleShortcutActions.length === 0 ? (
+                            <div className="settings-empty">No actions registered for this scope yet.</div>
+                          ) : shortcutGroups.map((group) => (
+                            <section className="settings-shortcut-group" key={group.title || 'default'}>
+                              {group.title ? (
+                                <div className="settings-shortcut-group-title">
+                                  <span>{group.title}</span>
+                                </div>
+                              ) : null}
+                              {group.rows.length === 0 ? (
+                                <div className="settings-empty compact">No shortcut items.</div>
+                              ) : group.rows.map(renderShortcutRow)}
+                            </section>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
-              </label>
-              <small>
-                Frames within this time distance are treated as the same video frame.
-              </small>
-            </section>
-            {settingsDialog.error ? <div className="dialog-message error">{settingsDialog.error}</div> : null}
-            <div className="dialog-actions">
-              <button onClick={saveSettingsDialog} type="button">Save</button>
-              <button onClick={() => setSettingsDialog(null)} type="button">Cancel</button>
+
+                <div className="settings-actions">
+                  <span className={settingsDialog.error ? 'settings-message error' : 'settings-message'}>
+                    {settingsDialog.error || ''}
+                  </span>
+                  <button onClick={() => saveSettingsDialog()} type="button">Save</button>
+                  <button className="primary" onClick={() => saveSettingsDialog({ close: true })} type="button">Save&amp;Exit</button>
+                  <button onClick={() => { cancelShortcutCapture(); setSettingsDialog(null) }} type="button">Cancel</button>
+                </div>
+              </section>
             </div>
-          </div>
-        </div>
+          )
+        })()
       ) : null}
 
       {entityDialog ? (

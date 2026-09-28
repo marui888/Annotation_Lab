@@ -5,6 +5,137 @@
 
 ================********************=====================
 =========================================================
+//mr:: 2026_09_07 19_12_49
+
+为视频模式添加一个 "Toggle Vol" 功能，让音量在 0,50%，100% 三个档位切换，并未这个功能
+添加快捷键setting项。
+
+
+//mr:: 2026_09_07 14_07_59
+
+1. 以这个“黑暗”模式效果 的 设置哪些？哪些适合设置在 setting中，用户可以修改。
+2. 进入“黑暗模式“，字幕居中，但上下不要居中，最好上下是顶格。这个位置效果，在切换到其它View时，不要保留，
+不要影响其它模式的原有“位置”。
+
+//mr:: 2026_09_07 13_47_30
+
+添加一个View：
+
+fullscreen-state-3为基础，让视频内容区变成漆黑一片，
+
+1. 进入这个漆黑一片的视图状态时，如果显示的是rolling字幕，则自动让字幕panel居中显示。
+
+2. 漆黑一片效果，太单调了，显示一点过渡效果，或者显示成个模版，让视频的内容完全看不情况，但知道后面有个视频在变化。
+
+
+
+//mr:: 2026_09_07 12_07_33
+
+1. 左栏 Notes 的  字体大小添加 一行的众多UI元素的排列规则，应该和 右侧的 一样：在同一行，且向右靠拢，不要
+因为左栏宽度变化而“分散”开。
+2. 添加获取当前 note list item的 时间开始，时间开始+文件，这样的信息，的右键菜单。
+
+
+现在打开一个视频文件会加载字幕列表：
+
+1. 如果当前文件是从右侧 Note Pools 触发加载视频，是否也会加载其字幕？
+2. 状态栏会显示一个可用的字幕的列表，同过语言来区分（语言信息包含在字幕文件名的末端）
+aaa.mp4 加载的就是 aaa.srt 没有“语言”信息，怎么办？在字幕列表中如何显示呢？
+
+//mr:: 2026_09_07 11_43_12
+
+还有 Replace 功能区（界面交互UI）已弹出窗口的形式显示，尽量不占用列表的空间。
+
+//mr:: 2026_09_07 11_13_09
+
+继续我们对 prj_videoPlayer_new 项目的修改：
+1. Info区 的 mode 移动到 底部状态栏 的 “Control ” 的旁边。
+2. Info区添加 Length 信息，显示当前视频文件的播放时长。
+3. 当 Note Content 获得输入焦点，若它的内容是“None”，则自动清空内容。
+4. 左边Note子TAB video note list, Notes Pool子TAB中 查询到的 note list, 都需要增加 Replace替换功能。
+替换前需要提示，会涉及多少个符合条件的“替换”，确认后方可执行。
+左边Note子TAB video note list，变成“Dirty”数据状态，不自动持久化。
+Notes Pool子TAB中 查询到的 note list,替换后，自动持久化。
+
+提出你的解决方案和实施步骤
+
+//mr:: 2026_08_30 23_52_59
+
+1. Source->SimpleNote子页中包含的Simplenote列表，中的字体全变成和“import”显示字体一样的。
+2. 整个应用中，很多地方会动态出现滚动条，将滚动条的样式改成与 
+Source->SimpleNote子页中包含的Simplenote列表的滚动条 相应的ABEditor也要做相应的同步修改。
+
+//mr:: 2026_08_30 23_42_26
+
+1. Source -> SimpleNote中包含的Simplenote列表，
+这个列表在应该改成真实的列表控件，而不是模拟列表行为的一组控件。
+
+
+//mr:: 2026_08_30 23_34_18
+
+Source->SimpleNote有一个列表。但列表很长，滚动条产生后，滚动条 只能 管住 列表，而不是 整个 SimpleNote子页 
+
+
+//mr:: 2026_08_30 23_14_03
+在 Media 区的下方的 SimpleNote子页中的 Content 显示编辑区（字体颜色背景的
+设置为：配置1）。
+
+1. Source区，SimpleNote-> Content内容区（无论是截短还是展开状态，字体变大一些）颜色。
+2. Builder区的 Keywords 文本输入框。
+
+将1,2区的颜色配置，改成 配置1.
+
+//mr:: 2026_08_30 22_41_22
+同意上面的方案。同时，在实现下面的需求：
+
+1. “importedTime” 就改成“importTime"吧，不会有歧义。"import old"改成“import”
+2. 关于Source->SimpleNote子页，功能修改，视图修改：
+2.1 每一个item的 “import” 显示在 与时间 同一行，靠右显示。
+2.2 现在content的内容是显示一定长度，太长的截短显示。修改为类似于 Entity子页那样，
+可以有expand功能，选中的item就expand：显示完整的content内容。
+2.3 添加 Filter 功能，输入一个字符，在“content”的好有此字符的，就是符合的item.
+3. import文件时，
+3.1 要先检查 主文件名 是否一致，不一致，不导入，并提示。
+3.2 如果发现曾经导入过，提示是否还有导入，确认后再导入。
+
+//mr:: 2026_08_30 22_22_24
+
+SimpleNote 字段添加一个： importedTime. 在用import old 导入时生成。
+
+如果同一个 旧数据 被导入第二次，现在是怎么处理的？
+
+
+//mr:: 2026_08_30 13_32_37
+
+Open Video 打开一个视频文件，关闭应用。再打开应用，在RECENT FIlES 列表中，点击这个文件，就打不开文件了（只有文件名显示在视频区）。
+但是打开 以前打开过的 图片 文件，可以被打开。
+
+//mr:: 2026_08_30 13_06_38
+
+1.
+
+lab项目 的 Action Registry：
+- 注册上面这些 video/simpleNote 命令
+- 按钮全部走 action
+这个功能有没有做？
+如果没做，就做。
+
+2. 
+在setting菜单下设置 （模仿 prj_videoPlayer_new ）
+
+General，Shortcuts 两个子TAB，
+
+General里分4个区域。
+Shortcuts列分4个子TAB。
+
+4个：对应 Video，Picture，PDF，Global（全局有效）
+
+Video，Picture，PDF 3个模式的判断，依赖与程序“状态”（或者说 当前激活的 session），需要程序自己判断。
+
+提出你的解决方案和实施步骤
+
+
+
 //mr:: 2026_08_27 16_56_54
 
 这个编辑器 不要放在 workspace里面吧，单独有给独立的窗口。
@@ -96,6 +227,109 @@ C层就可以 查询和使用 B层单位元素。做讲义，做习题集，做�
 =========================================================
 ================********************=====================
 =========================================================
+=========================================================
+1.
+Media Bottom Tabs 的 SimpleNote 子页，你看看 prj_videoPlayer_new  是怎么布局的，修改一下，
+尽量保持一致。
+2.
+除了 curStart：当前临时起点
+curEnd：当前临时终点
+
+还有 Start， End ， 语义同 prj_videoPlayer_new 项目：表示选中的，当前正在编辑的，simplenote笔记item
+中的 Start，End时间，执行 set Start，set End命令，改变 curStart,curEnd, 是否写会到item中，
+变成start，end，由用户执行 Quick Update Range或 Write Current Range 命令来确定。
+
+3.
+
+Go To Start
+Go To End
+
+只有一个GO TO 就是 跳转位置就是start。
+
+
+//mr:: 2026_08_30 12_14_43
+1.
+ Time Row
+│  │  ├─ Start 输入框
+│  │  ├─ Set Start
+│  │  ├─ End 输入框
+│  │  └─ Set End
+
+这个是不需要的（不要手动输入start，end时间）
+实现 Set Start ，Set End 命令，通过快捷键实现。
+
+2.
+但是需要一个类似与 “ prj_videoPlayer_new ” 视频模型下的 
+
+3.
+我觉得可以把 ABEditor的左栏（Media区）中的 A Preview变成一个TAB，增加一个 SimpleNote子TAB，把 与 SimpleNote 有关的
+ Content 编辑框， video info 区 和 control区，搬到这个TAB。这个TAB的布局 就和  “ prj_videoPlayer_new ” 视频模式下
+  方的那个区域，几乎一样了。
+
+在 Source->SimpleNote子TAB中，就保留 SimpleNote列表。这个列表有 prj_videoPlayer_new 视频模式 rangle list右键菜单的
+所有功能。
+
+4. SimpleNote列表 单击会触发 Media->SimpleNote 变成前景，在右键菜单中GO TO菜单，功能是：不仅让 Media->SimpleNote 变成前景，而且
+视频播放器的当前位置也需要调整（与是否处于暂停还是正播放状态无关）
+
+依据上面需求和信息，修改方案。
+
+
+
+
+
+
+
+//mr:: 2026_08_30 11_36_48
+ 
+
+起初，是想把 prj_annotation_lab的验证结果（ABEditor，CompositeEditor）搬到 prj_videoPlayer_new 中使用。
+现在 是在 把 prj_videoPlayer_new 的 视频模式 的功能，搬到 prj_annotation_lab 项目中。
+
+prj_videoPlayer_new 有多个模式：video，picture，text，managment。
+不同模式有不同“功能命令”，命令可以可以设置快捷键，为了构架清楚，使用”Action Registry / 功能命令层 ”
+你看看 prj_videoPlayer_new ，关于 video模式的 众多功能命令，还是很有用的。
+
+1.
+Append Mark （相对于现在的Add所实现的功能)
+Append Quick Mark
+Quick Update Range
+Write Current Range
+Set Start
+Set End
+Long Back
+Long Forward
+
+这几个功能还是很必要的。
+2.
+“Update” 如果是 用当前编辑区内容替换当前选中的 SimpleNote 的 “Content”字段，这个按钮改成”Update Content“
+
+
+提出你的解决方案和实施步骤
+
+//mr:: 2026_08_30 11_01_49
+
+起初，是想把 prj_annotation_lab的验证结果（ABEditor，CompositeEditor）搬到 prj_videoPlayer_new 中使用。
+现在 是在 把 prj_videoPlayer_new 的 视频模式 的功能，搬到 prj_annotation_lab 项目中。
+
+prj_videoPlayer_new 有多个模式：video，picture，text，managment。
+不同模式有不同“功能命令”，命令可以可以设置快捷键，为了构架清楚，使用”Action Registry / 功能命令层 ”
+你看看 prj_videoPlayer_new ，关于 video模式的 众多功能命令，还是很有用的。
+
+//mr:: 2026_08_30 10_59_47
+
+1. 
+ 时间行
+│  │  ├─ Start 输入框
+│  │  ├─ Set Start 按钮
+│  │  ├─ End 输入框
+│  │  └─ Set End 按钮
+
+改成与 new 项目一致：用 F2，F3 实现
+
+2.
+
+操作按钮行：
 
 //mr:: 2026_08_29 16_44_35
 

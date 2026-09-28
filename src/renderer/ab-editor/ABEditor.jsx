@@ -4,6 +4,7 @@ import BWorkflow from '../workflow/BWorkflow'
 import { denormalizeArrow, denormalizeRect } from '../core/geometryTransform'
 import { createVideoFrame } from '../media/videoAdapter'
 import VideoPlayer from '../video/VideoPlayer'
+import { runAction } from '../actions/actionRegistry'
 import APreviewCard from './APreviewCard'
 import { loadEditorSessionFromInput } from './abEditorLoader'
 
@@ -68,6 +69,7 @@ function VideoFramePanel({
   onToolModeChange,
   onUpdateAnnotation,
   onUseVideoFrame,
+  onVideoPlaybackInfo,
   playPauseRequestId,
   selectedAnnotationIds,
   showBindFrameOverlay,
@@ -110,6 +112,24 @@ function VideoFramePanel({
     onMetadataRef.current = onMetadata
   }, [onMetadata])
 
+  const emitPlaybackInfo = useCallback((patch = {}) => {
+    const player = playerRef.current
+    onVideoPlaybackInfo?.({
+      currentTime: player?.getCurrentTime?.() ?? 0,
+      duration: player?.getDuration?.() ?? null,
+      state: playState,
+      status: statusText,
+      ...patch,
+    })
+  }, [onVideoPlaybackInfo, playState, statusText])
+
+  useEffect(() => {
+    emitPlaybackInfo()
+    if (playState !== 'Playing') return undefined
+    const timerId = window.setInterval(() => emitPlaybackInfo({ state: 'Playing' }), 250)
+    return () => window.clearInterval(timerId)
+  }, [emitPlaybackInfo, playState])
+
   const handleVideoReady = () => {
     setStatusText('Video ready')
   }
@@ -122,6 +142,11 @@ function VideoFramePanel({
       duration: player.duration() || null,
     })
     setStatusText('Metadata loaded')
+    emitPlaybackInfo({
+      currentTime: player.currentTime?.() ?? 0,
+      duration: player.duration?.() ?? null,
+      status: 'Metadata loaded',
+    })
   }
 
   const toggleVideoJsPlay = useCallback(() => {
@@ -229,6 +254,7 @@ function VideoFramePanel({
     playerRef.current.seek(videoSeekRequest.time)
 
     const rebuildPreview = () => {
+      if (!videoSeekRequest.frameId) return
       rebuildPreviewAtCurrentTime({
         id: videoSeekRequest.frameId,
         sourceId: source?.id,
@@ -277,11 +303,13 @@ function VideoFramePanel({
           onPause={() => {
             setPlayState('Paused')
             setCurrentPlaybackFrame()
+            emitPlaybackInfo({ state: 'Paused', status: 'Paused' })
           }}
           onPlay={() => {
             setPlayState('Playing')
             setTransientAnnotationIds([])
             setStatusText('Playing - annotations hidden')
+            emitPlaybackInfo({ state: 'Playing', status: 'Playing - annotations hidden' })
           }}
           onPlaying={() => setPlayState('Playing')}
           onReady={handleVideoReady}
@@ -392,6 +420,9 @@ export default function ABEditor({
   initialInput,
   isDirty,
   layoutState = DEFAULT_AB_LAYOUT,
+  mediaBottomTab = 'aPreview',
+  curEnd = '',
+  curStart = '',
   onAddAnnotation,
   onAddTextAnnotation,
   onBindCurrentVideoFrame,
@@ -405,6 +436,7 @@ export default function ABEditor({
   onGoToAnnotation,
   onImageSizeChange,
   onLayoutStateChange,
+  onMediaBottomTabChange,
   onSessionLoadError,
   onSessionLoaded,
   onSessionLoadStart,
@@ -417,17 +449,22 @@ export default function ABEditor({
   onUpdateAnnotation,
   onUpdateEntity,
   onUseVideoFrame,
+  onVideoPlaybackInfo,
   playPauseRequestId,
   previewAnnotationId,
   saveStatus,
   selectedAnnotationIds,
   selectedEntity,
+  selectedSimpleNote,
+  simpleNoteDraft = '',
   showBindFrameOverlay = false,
   source,
   subjectSchemas,
   textDraft,
   toolMode,
+  updateSimpleNoteDraft,
   updateTextDraft,
+  videoPlaybackInfo,
   videoSeekRequest,
   zoom,
   zoomMode,
@@ -644,6 +681,132 @@ export default function ABEditor({
     return 'image'
   }
 
+  const formatSimpleTime = (value) => {
+    if (typeof value === 'string' && value.trim()) return value
+    const numberValue = Number(value)
+    if (!Number.isFinite(numberValue)) return '--:--:--.-'
+    return formatTime(numberValue)
+  }
+
+  const renderAPreviewPanel = () => {
+    if (previewAnnotation) {
+      return (
+        <div className="a-preview-body">
+          <div className="a-preview-header">
+            <strong>A Preview</strong>
+            <span>{previewAnnotation.type}</span>
+            <span title={previewAnnotation.id}>{previewAnnotation.id}</span>
+            <span>{getSelectedFrameLabel(previewAnnotation)}</span>
+            <small>{previewAnnotation.type === 'text' ? previewAnnotation.text || 'FreeText' : ''}</small>
+          </div>
+          <APreviewCard
+            annotation={previewAnnotation}
+            imageUrl={previewAnnotationPreview?.imageUrl}
+            imageSize={previewAnnotationPreview?.imageSize}
+            missingPreviewText={isVideoSource
+              ? previewAnnotationPreview?.reason
+                ? `Frame preview failed: ${previewAnnotationPreview.reason}`
+                : 'Building frame preview...'
+              : 'Preview unavailable.'}
+            showInfo={false}
+          />
+        </div>
+      )
+    }
+
+    if (selectedAnnotationIds.length > 1) {
+      return (
+        <div className="a-preview-body compact-message">
+          Multiple A objects selected. Open B Preview or select one A object.
+        </div>
+      )
+    }
+
+    return (
+      <div className="a-preview-body compact-message">
+        No A object selected.
+      </div>
+    )
+  }
+
+  const renderSimpleNotePanel = () => (
+    <div className="simple-note-editor-panel">
+      <textarea
+        className="simple-note-content-editor"
+        onChange={(event) => updateSimpleNoteDraft?.(event.target.value)}
+        placeholder="SimpleNote content"
+        value={simpleNoteDraft}
+      />
+      <div className="simple-note-side-panel">
+        <div className="simple-note-info">
+          <div className="info-pair">
+            <div>
+              <span>start</span>
+              <strong>{selectedSimpleNote?.start || '--:--:--.-'}</strong>
+            </div>
+            <div>
+              <span>end</span>
+              <strong>{selectedSimpleNote?.end || '--:--:--.-'}</strong>
+            </div>
+          </div>
+          <div className="info-pair">
+            <div>
+              <span>curStart</span>
+              <strong>{curStart || '--:--:--.-'}</strong>
+            </div>
+            <div>
+              <span>curEnd</span>
+              <strong>{curEnd || '--:--:--.-'}</strong>
+            </div>
+          </div>
+          <div>
+            <span>playing</span>
+            <strong>{formatSimpleTime(videoPlaybackInfo?.currentTime)}</strong>
+          </div>
+          <div>
+            <span>state</span>
+            <strong>{videoPlaybackInfo?.state || '--'}</strong>
+          </div>
+          <div>
+            <span>status</span>
+            <strong>{videoPlaybackInfo?.status || '--'}</strong>
+          </div>
+        </div>
+        <div className="simple-note-controls">
+          <button data-tooltip="Play / Pause" onClick={() => runAction('video.playPause')} type="button">
+            <i className="fa-solid fa-play" aria-hidden="true" />
+          </button>
+          <button data-tooltip="Set Start" onClick={() => runAction('video.simpleNote.setStart')} type="button">S</button>
+          <button data-tooltip="Set End" onClick={() => runAction('video.simpleNote.setEnd')} type="button">E</button>
+          <button data-tooltip="Long Back" onClick={() => runAction('video.longBack')} type="button">
+            <i className="fa-solid fa-backward-fast" aria-hidden="true" />
+          </button>
+          <button data-tooltip="Long Forward" onClick={() => runAction('video.longForward')} type="button">
+            <i className="fa-solid fa-forward-fast" aria-hidden="true" />
+          </button>
+          <button data-tooltip="Append Mark" onClick={() => runAction('video.simpleNote.appendMark')} type="button">
+            <i className="fa-solid fa-plus" aria-hidden="true" />
+          </button>
+          <button data-tooltip="Append Quick Mark" onClick={() => runAction('video.simpleNote.appendQuickMark')} type="button">
+            <i className="fa-solid fa-bolt" aria-hidden="true" />
+          </button>
+          <button disabled={!selectedSimpleNote} data-tooltip="Quick Update Range" onClick={() => runAction('video.simpleNote.quickUpdateRange')} type="button">
+            <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
+          </button>
+          <button disabled={!selectedSimpleNote} data-tooltip="Write Current Range" onClick={() => runAction('video.simpleNote.writeCurrentRange')} type="button">
+            <i className="fa-solid fa-pen-to-square" aria-hidden="true" />
+          </button>
+          <button disabled={!selectedSimpleNote} data-tooltip="Update Content" onClick={() => runAction('video.simpleNote.updateContent')} type="button">
+            <i className="fa-solid fa-floppy-disk" aria-hidden="true" />
+          </button>
+          <button disabled={!selectedSimpleNote} data-tooltip="Delete" onClick={() => runAction('video.simpleNote.delete')} type="button">
+            <i className="fa-solid fa-trash" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   const startAObjectDrag = (event, annotationIds) => {
     const ids = annotationIds.filter((id) => annotations.some((annotation) => annotation.id === id))
     if (ids.length === 0) return
@@ -851,6 +1014,7 @@ export default function ABEditor({
                     onToolModeChange={onToolModeChange}
                     onUpdateAnnotation={onUpdateAnnotation}
                     onUseVideoFrame={onUseVideoFrame}
+                    onVideoPlaybackInfo={onVideoPlaybackInfo}
                     selectedAnnotationIds={selectedAnnotationIds}
                     showBindFrameOverlay={showBindFrameOverlay}
                     source={source}
@@ -878,34 +1042,31 @@ export default function ABEditor({
                 title="Resize A Preview"
               />
             ) : null}
-            {previewAnnotation ? (
-              <div className="a-preview-panel" style={{ height: aPreviewHeight }}>
-                <div className="a-preview-header">
-                  <strong>A Preview</strong>
-                  <span>{previewAnnotation.type}</span>
-                  <span title={previewAnnotation.id}>{previewAnnotation.id}</span>
-                  <span>{getSelectedFrameLabel(previewAnnotation)}</span>
-                  <small>{previewAnnotation.type === 'text' ? previewAnnotation.text || 'FreeText' : ''}</small>
+            {shouldShowAPreview ? (
+              <div className="media-bottom-tabs" style={{ height: aPreviewHeight }}>
+                <nav className="media-bottom-tabbar" aria-label="Media bottom tabs">
+                  <button
+                    className={!isVideoSource || mediaBottomTab === 'aPreview' ? 'active' : ''}
+                    onClick={() => onMediaBottomTabChange?.('aPreview')}
+                    type="button"
+                  >
+                    A Preview
+                  </button>
+                  {isVideoSource ? (
+                    <button
+                      className={mediaBottomTab === 'simpleNote' ? 'active' : ''}
+                      onClick={() => onMediaBottomTabChange?.('simpleNote')}
+                      type="button"
+                    >
+                      SimpleNote
+                    </button>
+                  ) : null}
+                </nav>
+                <div className="media-bottom-tab-body">
+                  {isVideoSource && mediaBottomTab === 'simpleNote'
+                    ? renderSimpleNotePanel()
+                    : renderAPreviewPanel()}
                 </div>
-                <APreviewCard
-                  annotation={previewAnnotation}
-                  imageUrl={previewAnnotationPreview?.imageUrl}
-                  imageSize={previewAnnotationPreview?.imageSize}
-                  missingPreviewText={isVideoSource
-                    ? previewAnnotationPreview?.reason
-                      ? `Frame preview failed: ${previewAnnotationPreview.reason}`
-                      : 'Building frame preview...'
-                    : 'Preview unavailable.'}
-                  showInfo={false}
-                />
-              </div>
-            ) : selectedAnnotationIds.length > 1 ? (
-              <div className="a-preview-panel compact-message" style={{ height: aPreviewHeight }}>
-                Multiple A objects selected. Open B Preview or select one A object.
-              </div>
-            ) : shouldShowAPreview ? (
-              <div className="a-preview-panel compact-message" style={{ height: aPreviewHeight }}>
-                No A object selected.
               </div>
             ) : null}
         </div>

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('labApi', {
   openVideo: () => ipcRenderer.invoke('file:openVideo'),
   loadImageByPath: (filePath) => ipcRenderer.invoke('file:loadImageByPath', filePath),
   openAnnotationFile: () => ipcRenderer.invoke('annotation:openFile'),
+  importSimpleNotes: () => ipcRenderer.invoke('annotation:importSimpleNotes'),
   readAnnotationFileRaw: (annotationFilePath) => ipcRenderer.invoke('annotation:readRawByPath', annotationFilePath),
   loadAnnotationFileByPath: (annotationFilePath) => ipcRenderer.invoke('annotation:loadFileByPath', annotationFilePath),
   saveAnnotationFileRaw: (payload) => ipcRenderer.invoke('annotation:saveRawByPath', payload),
@@ -32,6 +33,7 @@ contextBridge.exposeInMainWorld('labApi', {
   deleteSubjectSchema: (filePath) => ipcRenderer.invoke('schema:delete', filePath),
   saveSubjectSchema: (payload) => ipcRenderer.invoke('schema:save', payload),
   saveSubjectSchemaAs: (payload) => ipcRenderer.invoke('schema:saveAs', payload),
+  openSchemaEditor: () => ipcRenderer.invoke('schema:openEditor'),
   readSettings: () => ipcRenderer.invoke('settings:read'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   onOpenSettings: (callback) => {

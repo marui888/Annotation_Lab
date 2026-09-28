@@ -505,9 +505,17 @@
   line-height: 1.35;
 }
 
+.b-feature-section.keyword .b-feature-field textarea {
+  border-color: var(--note-text-border, #3c3c3c);
+  background: var(--note-text-bg, #f8f5ec);
+  color: var(--note-text-color, #171717);
+  font-family: var(--note-text-font, Consolas, 'Microsoft YaHei', sans-serif);
+  font-size: 14px;
+}
+
 .b-feature-field textarea:focus {
-  outline: 1px solid #ffd45a;
-  border-color: #ffd45a;
+  outline: 1px solid var(--note-text-focus, #ffd45a);
+  border-color: var(--note-text-focus, #ffd45a);
 }
 
 .b-feature-checkbox-list {

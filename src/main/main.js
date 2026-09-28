@@ -14,6 +14,27 @@ let schemaEditorWindow = null
 
 const DEFAULT_SETTINGS = {
   frameTimestampToleranceSeconds: 0.1,
+  shortcuts: {
+    video: {
+      'video.playPause': 'Space',
+      'video.longBack': 'Ctrl+ArrowLeft',
+      'video.longForward': 'Ctrl+ArrowRight',
+      'video.simpleNote.setStart': 'F2',
+      'video.simpleNote.setEnd': 'F3',
+      'video.simpleNote.appendQuickMark': 'Ctrl+S',
+      'video.simpleNote.quickUpdateRange': 'Ctrl+G',
+      'video.simpleNote.writeCurrentRange': 'Ctrl+W',
+    },
+    picture: {
+      'picture.previous': '',
+      'picture.next': '',
+    },
+    pdf: {},
+    global: {
+      'global.openSettings': '',
+      'global.openSchemaEditor': '',
+    },
+  },
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -48,6 +69,24 @@ function normalizeSettings(settings = {}) {
     frameTimestampToleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0
       ? tolerance
       : DEFAULT_SETTINGS.frameTimestampToleranceSeconds,
+    shortcuts: {
+      video: {
+        ...DEFAULT_SETTINGS.shortcuts.video,
+        ...(settings.shortcuts?.video || {}),
+      },
+      picture: {
+        ...DEFAULT_SETTINGS.shortcuts.picture,
+        ...(settings.shortcuts?.picture || {}),
+      },
+      pdf: {
+        ...DEFAULT_SETTINGS.shortcuts.pdf,
+        ...(settings.shortcuts?.pdf || {}),
+      },
+      global: {
+        ...DEFAULT_SETTINGS.shortcuts.global,
+        ...(settings.shortcuts?.global || {}),
+      },
+    },
   }
 }
 
@@ -460,6 +499,11 @@ app.whenReady().then(() => {
     filePath: getSettingsFilePath(),
   }))
 
+  ipcMain.handle('schema:openEditor', async () => {
+    createSchemaEditorWindow()
+    return { ok: true }
+  })
+
   ipcMain.handle('file:openImage', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Open image',
@@ -517,6 +561,37 @@ app.whenReady().then(() => {
       return {
         ok: false,
         annotationFilePath: result.filePaths[0],
+        reason: error.message || String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('annotation:importSimpleNotes', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Import Video Notes JSON',
+      properties: ['openFile'],
+      filters: [
+        { name: 'JSON', extensions: ['json'] },
+      ],
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+
+    const filePath = result.filePaths[0]
+
+    try {
+      const text = await fs.readFile(filePath, 'utf8')
+      return {
+        ok: true,
+        filePath,
+        data: JSON.parse(text),
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        filePath,
         reason: error.message || String(error),
       }
     }
