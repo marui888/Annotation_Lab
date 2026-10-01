@@ -1964,6 +1964,50 @@ button.active-tool {
   gap: 8px;
 }
 
+.app-close-dialog-layer {
+  z-index: 60;
+}
+
+.app-close-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.app-close-session-list {
+  max-height: min(280px, 40vh);
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid #4a4a4a;
+  background: #171717;
+  list-style: none;
+}
+
+.app-close-session-list li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 6px;
+  color: #ddd4c0;
+}
+
+.app-close-session-list li + li {
+  border-top: 1px solid #333;
+}
+
+.app-close-session-list span {
+  color: #b8b0a0;
+}
+
+.app-close-session-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-close-actions {
+  flex-wrap: wrap;
+}
+
 .export-result-dialog {
   width: min(520px, calc(100vw - 48px));
 }

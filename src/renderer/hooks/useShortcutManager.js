@@ -119,6 +119,7 @@ export default function useShortcutManager(scope, shortcuts, disabled = false) {
 
       const actionId = findActionByShortcutInScopes(shortcuts, scopes, shortcut)
       if (!actionId) return
+      if (isTextEditingTarget(event.target) && actionId === 'global.undoDelete') return
 
       event.preventDefault()
       event.stopPropagation()

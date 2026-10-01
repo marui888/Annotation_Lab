@@ -64,6 +64,7 @@ import './App.css'
 const RECENT_FILES_KEY = 'annotationLab.recentFiles'
 const LEGACY_RECENT_IMAGES_KEY = 'annotationLab.recentImages'
 const MAX_RECENT_FILES = 20
+const MAX_DELETE_UNDO_ENTRIES = 20
 const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
 const DEFAULT_APP_SETTINGS = {
   frameTimestampToleranceSeconds: 0.1,
@@ -84,6 +85,7 @@ const DEFAULT_APP_SETTINGS = {
     },
     pdf: {},
     global: {
+      'global.undoDelete': 'Ctrl+Z',
       'global.openSettings': '',
       'global.openSchemaEditor': '',
     },
@@ -321,6 +323,50 @@ const cItemTreeContains = (items, itemId) => (
   ))
 )
 
+const findCItemInTree = (items, itemId) => {
+  for (const item of items) {
+    if (item.id === itemId) return item
+    const nestedItem = findCItemInTree(item.children || [], itemId)
+    if (nestedItem) return nestedItem
+  }
+  return null
+}
+
+function cloneUndoValue(value) {
+  if (typeof structuredClone === 'function') return structuredClone(value)
+  return JSON.parse(JSON.stringify(value))
+}
+
+function areUndoContentsEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function isUnsavedSaveStatus(status) {
+  return status === 'Unsaved'
+    || status === 'Saving...'
+    || String(status || '').startsWith('Save failed:')
+}
+
+function getUnsavedAppWorkspaceItems(closeData = {}) {
+  const abItems = (closeData.abSessions || [])
+    .filter((session) => isUnsavedSaveStatus(session.saveStatus))
+    .map((session) => ({
+      id: session.id,
+      type: 'ab',
+      editorLabel: 'ABEditor',
+      title: session.title || 'Untitled',
+    }))
+  const cItems = Object.entries(closeData.cWorkspaces || {})
+    .filter(([, workspace]) => isUnsavedSaveStatus(workspace.cSaveStatus))
+    .map(([workspaceId, workspace]) => ({
+      id: workspaceId,
+      type: 'c',
+      editorLabel: 'CEditor',
+      title: workspace.cDocument.title || getPathFileName(workspace.cDocumentFilePath) || 'Untitled',
+    }))
+  return [...abItems, ...cItems]
+}
+
 function getFrameTimeStamp(targetFrame) {
   const time = Number(targetFrame?.timeStamp ?? targetFrame?.locator?.time)
   return Number.isFinite(time) ? time : null
@@ -443,6 +489,7 @@ function App() {
   const pendingPreviewFrameIdsRef = useRef(new Set())
   const actionHandlersRef = useRef({})
   const appSettingsRef = useRef(DEFAULT_APP_SETTINGS)
+  const appCloseDataRef = useRef({ abSessions: [], cWorkspaces: {} })
   const simpleNoteListRef = useRef(null)
   const [source, setSource] = useState(null)
   const [frame, setFrame] = useState(null)
@@ -508,6 +555,7 @@ function App() {
   const [pendingImageSwitch, setPendingImageSwitch] = useState(null)
   const [pendingAnnotationDelete, setPendingAnnotationDelete] = useState(null)
   const [pendingEditorCloseSessionId, setPendingEditorCloseSessionId] = useState(null)
+  const [appCloseDialog, setAppCloseDialog] = useState(null)
   const [workspaceTabMenu, setWorkspaceTabMenu] = useState(null)
   const [currentABInput, setCurrentABInput] = useState(null)
   const [pendingABInput, setPendingABInput] = useState(null)
@@ -521,6 +569,7 @@ function App() {
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS)
   const [settingsDialog, setSettingsDialog] = useState(null)
   const [exportResultDialog, setExportResultDialog] = useState(null)
+  const [deleteUndoStacks, setDeleteUndoStacks] = useState({})
   const [registeredActions, setRegisteredActions] = useState([])
   const [pendingShortcutCapture, setPendingShortcutCapture] = useState(null)
   const [bindFrameDialogDrag, setBindFrameDialogDrag] = useState(null)
@@ -795,6 +844,91 @@ function App() {
 
   useShortcutManager(activeShortcutScope, appSettings.shortcuts, Boolean(settingsDialog))
 
+  const getCurrentABUndoContent = () => ({ annotations, entities })
+  const getCurrentCUndoContent = () => ({ cDocument: activeCWorkspace.cDocument })
+  const activeDeleteUndoKey = activeWorkspaceTab?.type === 'c'
+    ? activeCWorkspaceId
+    : editorWorkspace.activeId
+  const activeDeleteUndoStack = deleteUndoStacks[activeDeleteUndoKey] || []
+  const activeDeleteUndoEntry = activeDeleteUndoStack[activeDeleteUndoStack.length - 1] || null
+  const activeDeleteUndoContent = activeWorkspaceTab?.type === 'c'
+    ? getCurrentCUndoContent()
+    : getCurrentABUndoContent()
+  const canUndoDelete = Boolean(
+    activeDeleteUndoEntry
+    && activeDeleteUndoEntry.editorType === activeWorkspaceTab?.type
+    && areUndoContentsEqual(activeDeleteUndoContent, activeDeleteUndoEntry.after)
+  )
+  const pushDeleteUndo = (workspaceId, entry) => {
+    if (!workspaceId || !entry?.before || !entry?.after) return
+    const safeEntry = cloneUndoValue(entry)
+    setDeleteUndoStacks((current) => {
+      const existing = current[workspaceId] || []
+      const previousEntry = existing[existing.length - 1]
+      const compatibleHistory = previousEntry && areUndoContentsEqual(previousEntry.after, safeEntry.before.content)
+        ? existing
+        : []
+      return {
+        ...current,
+        [workspaceId]: [...compatibleHistory, safeEntry].slice(-MAX_DELETE_UNDO_ENTRIES),
+      }
+    })
+  }
+
+  const clearDeleteUndo = (workspaceId) => {
+    if (!workspaceId) return
+    setDeleteUndoStacks((current) => {
+      if (!current[workspaceId]) return current
+      const next = { ...current }
+      delete next[workspaceId]
+      return next
+    })
+  }
+
+  const popDeleteUndo = (workspaceId) => {
+    setDeleteUndoStacks((current) => {
+      const stack = current[workspaceId] || []
+      if (stack.length === 0) return current
+      const next = { ...current }
+      const remaining = stack.slice(0, -1)
+      if (remaining.length > 0) next[workspaceId] = remaining
+      else delete next[workspaceId]
+      return next
+    })
+  }
+
+  const undoLastDelete = () => {
+    const workspaceId = activeDeleteUndoKey
+    const entry = activeDeleteUndoEntry
+    if (!workspaceId || !entry) return
+    const currentContent = entry.editorType === 'c'
+      ? getCurrentCUndoContent()
+      : getCurrentABUndoContent()
+    if (!areUndoContentsEqual(currentContent, entry.after)) {
+      clearDeleteUndo(workspaceId)
+      setMessage('Undo Delete is unavailable because the document changed after the deletion.')
+      return
+    }
+
+    if (entry.editorType === 'c') {
+      updateCWorkspace(workspaceId, {
+        cDocument: cloneUndoValue(entry.before.content.cDocument),
+        selectedBIndexItemKey: entry.before.selection?.selectedBIndexItemKey || '',
+        selectedCItemId: entry.before.selection?.selectedCItemId || null,
+        cSaveStatus: 'Unsaved',
+      })
+    } else {
+      setAnnotations(cloneUndoValue(entry.before.content.annotations))
+      setEntities(cloneUndoValue(entry.before.content.entities))
+      setSelectedAnnotationIds(entry.before.selection?.selectedAnnotationIds || [])
+      setSelectedEntityId(entry.before.selection?.selectedEntityId || null)
+      setLastPreviewAnnotationId(entry.before.selection?.lastPreviewAnnotationId || null)
+      setSaveStatus('Unsaved')
+    }
+    popDeleteUndo(workspaceId)
+    setMessage(`${entry.label} undone.`)
+  }
+
   const updateCWorkspace = (workspaceId, updater) => {
     setCWorkspaces((current) => {
       const existing = current[workspaceId] || createEmptyCWorkspace()
@@ -1019,6 +1153,34 @@ function App() {
     ...overrides,
   })
 
+  const activeABSessionSnapshot = buildCurrentEditorSessionSnapshot()
+  appCloseDataRef.current = {
+    abSessions: editorWorkspace.sessions.map((session) => (
+      session.id === editorWorkspace.activeId ? activeABSessionSnapshot : session
+    )),
+    cWorkspaces,
+  }
+
+  useEffect(() => {
+    const unsubscribe = window.labApi?.onAppCloseRequested?.(() => {
+      const items = getUnsavedAppWorkspaceItems(appCloseDataRef.current)
+      if (items.length === 0) {
+        window.labApi?.confirmAppClose?.()
+        return
+      }
+      setAppCloseDialog({
+        error: '',
+        items,
+        saving: false,
+      })
+    })
+    return () => unsubscribe?.()
+  }, [])
+
+  useEffect(() => {
+    window.labApi?.updateAppUnsavedState?.(getUnsavedAppWorkspaceItems(appCloseDataRef.current).length > 0)
+  }, [cWorkspaces, editorWorkspace, saveStatus])
+
   const applyEditorSessionSnapshot = (session) => {
     const sessionFrames = normalizeFrameTimeStamps(session.source?.kind, session.frames || [])
     const sessionFrame = sessionFrames.find((item) => item.id === session.frame?.id) || sessionFrames[0] || null
@@ -1108,6 +1270,7 @@ function App() {
       session.annotationFilePath
     )
     if (result?.ok) {
+      clearDeleteUndo(session.id)
       setEditorWorkspace((current) => ({
         ...current,
         sessions: current.sessions.map((item) => (
@@ -1172,6 +1335,7 @@ function App() {
   }
 
   const closeEditorSession = (sessionId) => {
+    clearDeleteUndo(sessionId)
     const currentSnapshot = buildCurrentEditorSessionSnapshot()
     const sessionsWithSnapshot = editorWorkspace.sessions.map((session) => (
       session.id === editorWorkspace.activeId ? { ...session, ...currentSnapshot } : session
@@ -1251,6 +1415,7 @@ function App() {
   }
 
   const applyImageEditorSession = (session) => {
+    clearDeleteUndo(editorWorkspace.activeId)
     const sessionEntities = (session.entities || []).map((entity) => sanitizeEntityForPersistence(entity))
     const targetEntity = sessionEntities.find((entity) => entity.id === session.input?.entityId)
       || sessionEntities[0]
@@ -1884,11 +2049,26 @@ function App() {
       setPendingAnnotationDelete(null)
       return
     }
-    setAnnotations((current) => current.filter((annotation) => !annotationIds.includes(annotation.id)))
-    setEntities((current) => current.map((entity) => ({
+    const nextAnnotations = annotations.filter((annotation) => !annotationIds.includes(annotation.id))
+    const nextEntities = entities.map((entity) => ({
       ...entity,
       ...createACardPatch(removeACardsByAObjectIds(getEntityACardTree(entity), annotationIds)),
-    })))
+    }))
+    pushDeleteUndo(editorWorkspace.activeId, {
+      editorType: 'ab',
+      label: `Delete ${annotationIds.length} A Object${annotationIds.length === 1 ? '' : 's'}`,
+      before: {
+        content: cloneUndoValue(getCurrentABUndoContent()),
+        selection: {
+          selectedAnnotationIds: [...selectedAnnotationIds],
+          selectedEntityId,
+          lastPreviewAnnotationId,
+        },
+      },
+      after: cloneUndoValue({ annotations: nextAnnotations, entities: nextEntities }),
+    })
+    setAnnotations(nextAnnotations)
+    setEntities(nextEntities)
     setLastPreviewAnnotationId((current) => (
       annotationIds.includes(current) ? null : current
     ))
@@ -2082,6 +2262,7 @@ function App() {
     const result = await saveAnnotationDocument(source.filePath, buildAnnotationDocument(), annotationFilePath)
 
     if (result?.ok) {
+      clearDeleteUndo(editorWorkspace.activeId)
       setAnnotationFilePath(result.annotationFilePath || annotationFilePath)
       setSaveStatus('Saved')
       return true
@@ -2098,6 +2279,7 @@ function App() {
     deleteSimpleNote,
     goToSimpleNote,
     importVideoNotes,
+    undoLastDelete,
     openAnnotation,
     openImage,
     openRelativeImageFromFolder,
@@ -2121,6 +2303,7 @@ function App() {
       { id: 'ab.aObject.goTo', handler: () => actionHandlersRef.current.goToAObjectFromMenu?.() },
       { id: 'ab.frame.goTo', handler: () => actionHandlersRef.current.goToFrameFromMenu?.() },
       { id: 'ab.entity.goTo', handler: () => actionHandlersRef.current.goToEntityFromMenu?.() },
+      { id: 'global.undoDelete', handler: () => actionHandlersRef.current.undoLastDelete?.() },
       { id: 'global.openSettings', handler: () => actionHandlersRef.current.openSettingsDialog?.() },
       { id: 'global.openSchemaEditor', handler: () => window.labApi?.openSchemaEditor?.() },
       { id: 'picture.openImage', handler: () => actionHandlersRef.current.openImage?.() },
@@ -3043,7 +3226,23 @@ function App() {
   }
 
   const deleteBEntity = (entityId) => {
-    setEntities((current) => current.filter((entity) => entity.id !== entityId))
+    const entity = entities.find((item) => item.id === entityId)
+    if (!entity) return
+    const nextEntities = entities.filter((item) => item.id !== entityId)
+    pushDeleteUndo(editorWorkspace.activeId, {
+      editorType: 'ab',
+      label: `Delete Entity: ${entity.label || entity.id}`,
+      before: {
+        content: cloneUndoValue(getCurrentABUndoContent()),
+        selection: {
+          selectedAnnotationIds: [...selectedAnnotationIds],
+          selectedEntityId,
+          lastPreviewAnnotationId,
+        },
+      },
+      after: cloneUndoValue({ annotations, entities: nextEntities }),
+    })
+    setEntities(nextEntities)
     if (selectedEntityId === entityId) setSelectedEntityId(null)
     setSaveStatus('Unsaved')
     closeEntityMenu()
@@ -3088,14 +3287,14 @@ function App() {
     return entity.id
   }
 
-  const updateBWorkflowEntity = (entityId, patch) => {
+  const updateBWorkflowEntity = (entityId, patch, options = {}) => {
     const cleanPatch = stripEntityFrameFields(patch)
     const hasACardPatch = (
       cleanPatch.aCards !== undefined ||
       cleanPatch.aObjectRefs !== undefined ||
       cleanPatch.aObjectIds !== undefined
     )
-    setEntities((current) => current.map((entity) => (
+    const nextEntities = entities.map((entity) => (
       entity.id === entityId
         ? {
             ...entity,
@@ -3105,7 +3304,23 @@ function App() {
             updatedAt: new Date().toISOString(),
           }
         : entity
-    )))
+    ))
+    if (options.undoDeleteLabel) {
+      pushDeleteUndo(editorWorkspace.activeId, {
+        editorType: 'ab',
+        label: options.undoDeleteLabel,
+        before: {
+          content: cloneUndoValue(getCurrentABUndoContent()),
+          selection: {
+            selectedAnnotationIds: [...selectedAnnotationIds],
+            selectedEntityId,
+            lastPreviewAnnotationId,
+          },
+        },
+        after: cloneUndoValue({ annotations, entities: nextEntities }),
+      })
+    }
+    setEntities(nextEntities)
     setSelectedEntityId(entityId)
     setAbInspectorTab('b')
     setSaveStatus('Unsaved')
@@ -3137,6 +3352,7 @@ function App() {
   const createCompositeWorkspaceId = () => `c-${createId('composite')}`
 
   const openCDocumentInWorkspace = (workspaceId, result) => {
+    clearDeleteUndo(workspaceId)
     updateCWorkspace(workspaceId, {
       cDocument: normalizeCDocument(result.data),
       cDocumentFilePath: result.filePath,
@@ -3200,12 +3416,14 @@ function App() {
       selectedCItemId: null,
       cSaveStatus: 'Saved',
     })
+    clearDeleteUndo(activeCWorkspaceId)
     setLeftTab('compositeFiles')
   }
 
   const closeCDocument = () => {
     if (!activeCWorkspaceId) return
     if (!confirmDiscardCWorkspaceChanges(activeCWorkspace)) return
+    clearDeleteUndo(activeCWorkspaceId)
     const workspaceIds = Object.keys(cWorkspaces)
     const closeIndex = workspaceIds.indexOf(activeCWorkspaceId)
     const nextWorkspaceIds = workspaceIds.filter((workspaceId) => workspaceId !== activeCWorkspaceId)
@@ -3223,6 +3441,7 @@ function App() {
     const workspace = cWorkspaces[workspaceId]
     if (!workspace) return
     if (!confirmDiscardCWorkspaceChanges(workspace)) return
+    clearDeleteUndo(workspaceId)
     const workspaceIds = Object.keys(cWorkspaces)
     const closeIndex = workspaceIds.indexOf(workspaceId)
     const nextWorkspaceIds = workspaceIds.filter((item) => item !== workspaceId)
@@ -3251,6 +3470,7 @@ function App() {
       cDocumentFilePath: result.filePath,
       cSaveStatus: 'Saved',
     })
+    clearDeleteUndo(workspaceId)
     return true
   }
 
@@ -3265,8 +3485,8 @@ function App() {
   const saveCDocumentAs = async (workspaceId = activeCWorkspaceId) => {
     const workspace = cWorkspaces[workspaceId] || activeCWorkspace
     const result = await window.labApi?.chooseCDocumentPath?.(workspace.cDocument.title)
-    if (!result?.ok) return
-    await saveCDocumentToPath(result.filePath, workspaceId)
+    if (!result?.ok) return false
+    return saveCDocumentToPath(result.filePath, workspaceId)
   }
 
   const saveWorkspaceTab = async (tabId) => {
@@ -3293,6 +3513,73 @@ function App() {
     }
 
     await saveCDocumentAs(tabId)
+  }
+
+  const setAppCloseError = (error) => {
+    setAppCloseDialog((current) => current
+      ? {
+          ...current,
+          error,
+          items: getUnsavedAppWorkspaceItems(appCloseDataRef.current),
+          saving: false,
+        }
+      : current)
+  }
+
+  const saveAllAndCloseApp = async () => {
+    if (appCloseDialog?.saving) return
+    setAppCloseDialog((current) => current
+      ? { ...current, error: '', saving: true }
+      : current)
+
+    try {
+      const closeData = appCloseDataRef.current
+      const unsavedABSessions = closeData.abSessions
+        .filter((session) => isUnsavedSaveStatus(session.saveStatus))
+      for (const session of unsavedABSessions) {
+        const saved = session.id === editorWorkspace.activeId
+          ? await saveAnnotations()
+          : await saveEditorSessionSnapshot(session)
+        if (!saved) {
+          setAppCloseError(`Could not save ABEditor session: ${session.title || 'Untitled'}`)
+          return
+        }
+      }
+
+      const unsavedCWorkspaces = Object.entries(closeData.cWorkspaces)
+        .filter(([, workspace]) => isUnsavedSaveStatus(workspace.cSaveStatus))
+      for (const [workspaceId, workspace] of unsavedCWorkspaces) {
+        const saved = workspace.cDocumentFilePath
+          ? await saveCDocumentToPath(workspace.cDocumentFilePath, workspaceId)
+          : await saveCDocumentAs(workspaceId)
+        if (!saved) {
+          const title = workspace.cDocument.title || getPathFileName(workspace.cDocumentFilePath) || 'Untitled'
+          setAppCloseError(`Could not save CEditor session: ${title}`)
+          return
+        }
+      }
+
+      const result = await window.labApi?.confirmAppClose?.()
+      if (!result?.ok) setAppCloseError('The application could not complete the close request.')
+    } catch (error) {
+      setAppCloseError(`Save failed: ${error?.message || String(error)}`)
+    }
+  }
+
+  const exitAppWithoutSaving = async () => {
+    const confirmed = window.confirm('Exit without saving all listed changes? This cannot be undone.')
+    if (!confirmed) return
+    const result = await window.labApi?.confirmAppClose?.()
+    if (!result?.ok) setAppCloseError('The application could not complete the close request.')
+  }
+
+  const cancelAppClose = async () => {
+    const result = await window.labApi?.cancelAppClose?.()
+    if (!result?.ok) {
+      setAppCloseError('The close request could not be canceled.')
+      return
+    }
+    setAppCloseDialog(null)
   }
 
   const closeWorkspaceTab = (tabId) => {
@@ -3519,18 +3806,34 @@ function App() {
 
   const deleteCItem = (itemId) => {
     if (!window.confirm('Delete this C item?')) return
-    const deletedItem = activeCWorkspace.cDocument.items.find((item) => item.id === itemId)
-      || activeCWorkspace.cDocument.items.find((item) => cItemTreeContains(item.children || [], itemId))
-    markCDocumentUnsaved({
+    const deletedItem = findCItemInTree(activeCWorkspace.cDocument.items, itemId)
+    if (!deletedItem) return
+    const nextDocument = {
       ...activeCWorkspace.cDocument,
       items: removeCItemFromTree(activeCWorkspace.cDocument.items, itemId),
-    })
-    if (
-      activeCWorkspace.selectedCItemId === itemId
-      || (deletedItem && cItemTreeContains(deletedItem.children || [], activeCWorkspace.selectedCItemId))
-    ) {
-      updateActiveCWorkspace({ selectedCItemId: null })
+      updatedAt: new Date().toISOString(),
     }
+    const nextSelectedCItemId = (
+      activeCWorkspace.selectedCItemId === itemId
+      || cItemTreeContains(deletedItem.children || [], activeCWorkspace.selectedCItemId)
+    ) ? null : activeCWorkspace.selectedCItemId
+    pushDeleteUndo(activeCWorkspaceId, {
+      editorType: 'c',
+      label: `Delete Composite Item: ${deletedItem.title || deletedItem.text || deletedItem.label || deletedItem.type || itemId}`,
+      before: {
+        content: cloneUndoValue(getCurrentCUndoContent()),
+        selection: {
+          selectedBIndexItemKey: activeCWorkspace.selectedBIndexItemKey,
+          selectedCItemId: activeCWorkspace.selectedCItemId,
+        },
+      },
+      after: cloneUndoValue({ cDocument: nextDocument }),
+    })
+    updateActiveCWorkspace({
+      cDocument: nextDocument,
+      selectedCItemId: nextSelectedCItemId,
+      cSaveStatus: 'Unsaved',
+    })
   }
 
   const openBRefFromCItem = (item) => {
@@ -3952,6 +4255,7 @@ function App() {
               <button className={toolMode === 'polygon' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.polygon')} type="button">Polygon</button>
               <button className={toolMode === 'text' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.text')} type="button">Text</button>
               <button disabled={selectedAnnotationIds.length === 0} onClick={() => runAction('picture.deleteSelected')} type="button">Delete</button>
+              <button disabled={!canUndoDelete} onClick={() => runAction('global.undoDelete')} title="Undo Delete" type="button">Undo</button>
             </section>
 
             <section className="panel-section">
@@ -4109,6 +4413,7 @@ function App() {
             cDocument={activeCWorkspace.cDocument}
             cDocumentFilePath={activeCWorkspace.cDocumentFilePath}
             cSaveStatus={activeCWorkspace.cSaveStatus}
+            canUndoDelete={canUndoDelete}
             layoutState={activeCWorkspace.layoutState}
             onAddBIndexItem={addBIndexItemToCDocument}
             onAddCRefItem={addCRefItemToCDocument}
@@ -4128,6 +4433,7 @@ function App() {
             onUpdateBIndexFilter={updateBIndexFilter}
             onUpdateDocumentField={updateCDocumentField}
             onUpdateItemText={updateCItemText}
+            onUndoDelete={undoLastDelete}
             repairRequestId={compositeRepairRequestId}
             selectedBIndexItemKey={activeCWorkspace.selectedBIndexItemKey}
             selectedCItemId={activeCWorkspace.selectedCItemId}
@@ -4783,6 +5089,45 @@ function App() {
             ) : null}
             <div className="dialog-actions">
               <button autoFocus onClick={() => setExportResultDialog(null)} type="button">Close</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {appCloseDialog ? (
+        <div className="dialog-layer app-close-dialog-layer">
+          <div className="entity-dialog app-close-dialog">
+            <div className="dialog-title">Unsaved Changes</div>
+            <div className="dialog-message">
+              The application has editor sessions with unsaved changes.
+            </div>
+            <dl className="dialog-info">
+              <dt>ABEditor</dt>
+              <dd>{appCloseDialog.items.filter((item) => item.type === 'ab').length} Session(s)</dd>
+              <dt>CEditor</dt>
+              <dd>{appCloseDialog.items.filter((item) => item.type === 'c').length} Session(s)</dd>
+            </dl>
+            <ul className="app-close-session-list">
+              {appCloseDialog.items.map((item) => (
+                <li key={`${item.type}:${item.id}`}>
+                  <span>{item.editorLabel}</span>
+                  <strong title={item.title}>{item.title}</strong>
+                </li>
+              ))}
+            </ul>
+            {appCloseDialog.error ? (
+              <div aria-live="polite" className="dialog-message error">{appCloseDialog.error}</div>
+            ) : null}
+            <div className="dialog-actions app-close-actions">
+              <button disabled={appCloseDialog.saving} onClick={saveAllAndCloseApp} type="button">
+                {appCloseDialog.saving ? 'Saving...' : 'Save All and Exit'}
+              </button>
+              <button disabled={appCloseDialog.saving} onClick={exitAppWithoutSaving} type="button">
+                Exit Without Saving
+              </button>
+              <button autoFocus disabled={appCloseDialog.saving} onClick={cancelAppClose} type="button">
+                Cancel
+              </button>
             </div>
           </div>
         </div>

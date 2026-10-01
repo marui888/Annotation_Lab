@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { setImmediate } from 'node:timers'
 import { pathToFileURL } from 'node:url'
 import { fileURLToPath } from 'node:url'
 
@@ -12,6 +13,10 @@ const require = createRequire(import.meta.url)
 
 let mainWindow = null
 let schemaEditorWindow = null
+let allowMainWindowClose = false
+let mainWindowCloseRequestPending = false
+let mainWindowHasUnsavedChanges = false
+let quitAppAfterCloseApproval = false
 
 const DEFAULT_SETTINGS = {
   frameTimestampToleranceSeconds: 0.1,
@@ -387,6 +392,9 @@ function fromLabFileUrl(url) {
 }
 
 function createWindow() {
+  allowMainWindowClose = false
+  mainWindowCloseRequestPending = false
+  mainWindowHasUnsavedChanges = false
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -399,6 +407,22 @@ function createWindow() {
       nodeIntegration: false,
       webSecurity: false,
     },
+  })
+
+  mainWindow.on('close', (event) => {
+    if (allowMainWindowClose || !mainWindowHasUnsavedChanges || mainWindow.webContents.isDestroyed()) return
+    event.preventDefault()
+    if (mainWindowCloseRequestPending) return
+    mainWindowCloseRequestPending = true
+    mainWindow.webContents.send('app:closeRequested')
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+    allowMainWindowClose = false
+    mainWindowCloseRequestPending = false
+    mainWindowHasUnsavedChanges = false
+    quitAppAfterCloseApproval = false
   })
 
   mainWindow.maximize()
@@ -517,6 +541,30 @@ app.whenReady().then(() => {
   protocol.handle('lab-file', (request) => {
     const filePath = fromLabFileUrl(request.url)
     return net.fetch(pathToFileURL(filePath).toString())
+  })
+
+  ipcMain.on('app:updateUnsavedState', (event, hasUnsavedChanges) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
+    mainWindowHasUnsavedChanges = Boolean(hasUnsavedChanges)
+  })
+
+  ipcMain.handle('app:cancelClose', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false }
+    mainWindowCloseRequestPending = false
+    quitAppAfterCloseApproval = false
+    return { ok: true }
+  })
+
+  ipcMain.handle('app:confirmClose', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false }
+    const shouldQuitApp = quitAppAfterCloseApproval
+    allowMainWindowClose = true
+    mainWindowCloseRequestPending = false
+    setImmediate(() => {
+      if (shouldQuitApp) app.quit()
+      else mainWindow?.close()
+    })
+    return { ok: true }
   })
 
   ipcMain.handle('settings:read', async () => ({
@@ -1490,6 +1538,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  if (!allowMainWindowClose) quitAppAfterCloseApproval = true
 })
 
 app.on('window-all-closed', () => {

@@ -244,7 +244,7 @@ function VideoFramePanel({
       },
       updatedAt: new Date().toISOString(),
     }
-    onUseVideoFrame?.(nextFrame, videoSize, previewUrl)
+    onUseVideoFrame?.(nextFrame, videoSize, previewUrl, { previewOnly: true })
   }, [onUseVideoFrame, source])
 
   useEffect(() => {

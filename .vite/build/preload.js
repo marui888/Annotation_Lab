@@ -37,6 +37,14 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	openSchemaEditor: () => electron.ipcRenderer.invoke("schema:openEditor"),
 	readSettings: () => electron.ipcRenderer.invoke("settings:read"),
 	saveSettings: (settings) => electron.ipcRenderer.invoke("settings:save", settings),
+	updateAppUnsavedState: (hasUnsavedChanges) => electron.ipcRenderer.send("app:updateUnsavedState", Boolean(hasUnsavedChanges)),
+	cancelAppClose: () => electron.ipcRenderer.invoke("app:cancelClose"),
+	confirmAppClose: () => electron.ipcRenderer.invoke("app:confirmClose"),
+	onAppCloseRequested: (callback) => {
+		const listener = () => callback?.();
+		electron.ipcRenderer.on("app:closeRequested", listener);
+		return () => electron.ipcRenderer.removeListener("app:closeRequested", listener);
+	},
 	onOpenSettings: (callback) => {
 		const listener = () => callback?.();
 		electron.ipcRenderer.on("settings:open", listener);

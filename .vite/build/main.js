@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { setImmediate } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
 //#region src/main/main.js
 var __filename = fileURLToPath(import.meta.url);
@@ -10,6 +11,10 @@ var __dirname = path.dirname(__filename);
 var require = createRequire(import.meta.url);
 var mainWindow = null;
 var schemaEditorWindow = null;
+var allowMainWindowClose = false;
+var mainWindowCloseRequestPending = false;
+var mainWindowHasUnsavedChanges = false;
+var quitAppAfterCloseApproval = false;
 var DEFAULT_SETTINGS = {
 	frameTimestampToleranceSeconds: .1,
 	shortcuts: {
@@ -335,6 +340,9 @@ function fromLabFileUrl(url) {
 	return decodeURIComponent(parsedUrl.pathname.slice(1));
 }
 function createWindow() {
+	allowMainWindowClose = false;
+	mainWindowCloseRequestPending = false;
+	mainWindowHasUnsavedChanges = false;
 	mainWindow = new BrowserWindow({
 		width: 1200,
 		height: 800,
@@ -347,6 +355,20 @@ function createWindow() {
 			nodeIntegration: false,
 			webSecurity: false
 		}
+	});
+	mainWindow.on("close", (event) => {
+		if (allowMainWindowClose || !mainWindowHasUnsavedChanges || mainWindow.webContents.isDestroyed()) return;
+		event.preventDefault();
+		if (mainWindowCloseRequestPending) return;
+		mainWindowCloseRequestPending = true;
+		mainWindow.webContents.send("app:closeRequested");
+	});
+	mainWindow.on("closed", () => {
+		mainWindow = null;
+		allowMainWindowClose = false;
+		mainWindowCloseRequestPending = false;
+		mainWindowHasUnsavedChanges = false;
+		quitAppAfterCloseApproval = false;
 	});
 	mainWindow.maximize();
 	mainWindow.loadURL("http://localhost:5173");
@@ -437,6 +459,27 @@ app.whenReady().then(() => {
 	protocol.handle("lab-file", (request) => {
 		const filePath = fromLabFileUrl(request.url);
 		return net.fetch(pathToFileURL(filePath).toString());
+	});
+	ipcMain.on("app:updateUnsavedState", (event, hasUnsavedChanges) => {
+		if (!mainWindow || event.sender !== mainWindow.webContents) return;
+		mainWindowHasUnsavedChanges = Boolean(hasUnsavedChanges);
+	});
+	ipcMain.handle("app:cancelClose", async (event) => {
+		if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false };
+		mainWindowCloseRequestPending = false;
+		quitAppAfterCloseApproval = false;
+		return { ok: true };
+	});
+	ipcMain.handle("app:confirmClose", async (event) => {
+		if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false };
+		const shouldQuitApp = quitAppAfterCloseApproval;
+		allowMainWindowClose = true;
+		mainWindowCloseRequestPending = false;
+		setImmediate(() => {
+			if (shouldQuitApp) app.quit();
+			else mainWindow?.close();
+		});
+		return { ok: true };
 	});
 	ipcMain.handle("settings:read", async () => ({
 		ok: true,
@@ -1457,6 +1500,9 @@ app.whenReady().then(() => {
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow();
 	});
+});
+app.on("before-quit", () => {
+	if (!allowMainWindowClose) quitAppAfterCloseApproval = true;
 });
 app.on("window-all-closed", () => {
 	if (process.platform !== "darwin") app.quit();

@@ -37,6 +37,14 @@ contextBridge.exposeInMainWorld('labApi', {
   openSchemaEditor: () => ipcRenderer.invoke('schema:openEditor'),
   readSettings: () => ipcRenderer.invoke('settings:read'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  updateAppUnsavedState: (hasUnsavedChanges) => ipcRenderer.send('app:updateUnsavedState', Boolean(hasUnsavedChanges)),
+  cancelAppClose: () => ipcRenderer.invoke('app:cancelClose'),
+  confirmAppClose: () => ipcRenderer.invoke('app:confirmClose'),
+  onAppCloseRequested: (callback) => {
+    const listener = () => callback?.()
+    ipcRenderer.on('app:closeRequested', listener)
+    return () => ipcRenderer.removeListener('app:closeRequested', listener)
+  },
   onOpenSettings: (callback) => {
     const listener = () => callback?.()
     ipcRenderer.on('settings:open', listener)

@@ -78,6 +78,7 @@ export default function CompositeEditor({
   cDocument,
   cDocumentFilePath,
   cSaveStatus,
+  canUndoDelete = false,
   layoutState = DEFAULT_COMPOSITE_LAYOUT,
   onAddBIndexItem,
   onAddCRefItem,
@@ -97,6 +98,7 @@ export default function CompositeEditor({
   onUpdateBIndexFilter,
   onUpdateDocumentField,
   onUpdateItemText,
+  onUndoDelete,
   repairRequestId = 0,
   selectedBIndexItemKey,
   selectedCItemId,
@@ -674,7 +676,8 @@ export default function CompositeEditor({
               </div>
               <div className="c-export-toolbar">
                 <button disabled={!selectedCItemId} onClick={onExportSelected} type="button">Export Selected</button>
-                <button disabled={cDocument.items.length === 0} onClick={onExport} type="button">Export</button>
+                <button disabled={cDocument.items.length === 0} onClick={onExport} type="button">Export All</button>
+                <button disabled={!canUndoDelete} onClick={onUndoDelete} title="Undo Delete" type="button">Undo</button>
               </div>
             </div>
           </div>

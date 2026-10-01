@@ -154,9 +154,9 @@ export default function BWorkflow({
     setPreviewScaleFactor((current) => Math.max(0.5, Math.min(3, Number((current + delta).toFixed(2)))))
   }
 
-  const updateEntityTree = (nextTree) => {
+  const updateEntityTree = (nextTree, options = {}) => {
     if (!selectedEntity) return
-    onUpdateEntity(selectedEntity.id, createACardPatch(nextTree))
+    onUpdateEntity(selectedEntity.id, createACardPatch(nextTree), options)
   }
 
   const createEntityFromSelection = () => {
@@ -262,7 +262,9 @@ export default function BWorkflow({
     if (!selectedEntity || flatCards.length === 0) return
     const confirmed = window.confirm(`Remove all ${flatCards.length} A Cards from this Entity?`)
     if (!confirmed) return
-    updateEntityTree([])
+    updateEntityTree([], {
+      undoDeleteLabel: `Remove ${flatCards.length} A Card${flatCards.length === 1 ? '' : 's'}`,
+    })
     setSelectedCardIds([])
   }
 
@@ -270,7 +272,11 @@ export default function BWorkflow({
     if (!selectedEntity || activeSelectedCardIds.length === 0) return
     const confirmed = window.confirm(`Remove selected ${activeSelectedCardIds.length} A Card(s) from this Entity?`)
     if (!confirmed) return
-    updateEntityTree(removeNodes(entityTree, activeSelectedCardIds))
+    const nextTree = removeNodes(entityTree, activeSelectedCardIds)
+    const removedCount = flatCards.length - flattenACardTree(nextTree).length
+    updateEntityTree(nextTree, {
+      undoDeleteLabel: `Remove ${removedCount} A Card${removedCount === 1 ? '' : 's'}`,
+    })
     setSelectedCardIds([])
   }
 
@@ -309,7 +315,11 @@ export default function BWorkflow({
         setCardMenu(null)
         return
       }
-      updateEntityTree(removeNodes(entityTree, [nodeId]))
+      const nextTree = removeNodes(entityTree, [nodeId])
+      const removedCount = flatCards.length - flattenACardTree(nextTree).length
+      updateEntityTree(nextTree, {
+        undoDeleteLabel: `Remove ${removedCount} A Card${removedCount === 1 ? '' : 's'}`,
+      })
       setSelectedCardIds((current) => current.filter((id) => id !== nodeId))
     }
     setCardMenu(null)
