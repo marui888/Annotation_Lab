@@ -15,6 +15,7 @@ export const ACTION_CATALOG = [
   { id: 'picture.tool.select', label: 'Tool Select', scope: 'picture', description: 'Switch A layer tool to Select.' },
   { id: 'picture.tool.rect', label: 'Tool Rect', scope: 'picture', description: 'Switch A layer tool to Rect.' },
   { id: 'picture.tool.arrow', label: 'Tool Arrow', scope: 'picture', description: 'Switch A layer tool to Arrow.' },
+  { id: 'picture.tool.polygon', label: 'Tool Polygon', scope: 'picture', description: 'Switch A layer tool to Polygon.' },
   { id: 'picture.tool.text', label: 'Tool Text', scope: 'picture', description: 'Switch A layer tool to Text.' },
   { id: 'picture.deleteSelected', label: 'Delete Selected A', scope: 'picture', description: 'Delete selected A Object(s).' },
   { id: 'picture.zoom.fit', label: 'Fit', scope: 'picture', description: 'Fit source view to available area.' },

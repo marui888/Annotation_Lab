@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { denormalizeArrow, denormalizeRect } from '../core/geometryTransform'
+import { useEffect, useId, useRef, useState } from 'react'
+import { denormalizeArrow, denormalizePolygon, denormalizeRect } from '../core/geometryTransform'
 import { createAnnotationCropLayout } from './previewCrop'
 
 function formatGeometryValue(value) {
@@ -32,6 +32,9 @@ function getAnnotationInfo(annotation) {
       `w ${formatGeometryValue(annotation.geometry.width)}`,
       `h ${formatGeometryValue(annotation.geometry.height)}`,
     ]
+  }
+  if (annotation.type === 'polygon') {
+    return [`${annotation.geometry?.points?.length || 0} vertices`]
   }
   return [annotation.id]
 }
@@ -136,6 +139,21 @@ function renderAnnotationSvgContent(annotation, crop, imageSize) {
     )
   }
 
+  if (annotation.type === 'polygon') {
+    const points = denormalizePolygon(annotation.geometry, imageSize)
+      .map((point) => `${point.x},${point.y}`)
+      .join(' ')
+    return (
+      <polygon
+        fill="none"
+        points={points}
+        stroke="#ff4949"
+        strokeWidth={strokeWidth}
+        vectorEffect="non-scaling-stroke"
+      />
+    )
+  }
+
   return null
 }
 
@@ -152,6 +170,7 @@ export default function APreviewCard({
   showInfo = true,
 }) {
   const cropHostRef = useRef(null)
+  const polygonClipId = `polygon-clip-${useId().replace(/:/g, '')}`
   const [cropHostSize, setCropHostSize] = useState(null)
   const hasLayoutScale = Number.isFinite(layoutScale)
 
@@ -185,6 +204,11 @@ export default function APreviewCard({
   const cropResult = createAnnotationCropLayout(annotation, imageSize, cropHostSize, {
     scale: layoutScale,
   })
+  const polygonPoints = annotation.type === 'polygon'
+    ? denormalizePolygon(annotation.geometry, imageSize)
+      .map((point) => `${point.x},${point.y}`)
+      .join(' ')
+    : ''
 
   return (
     <article className={[
@@ -207,7 +231,15 @@ export default function APreviewCard({
             viewBox={`${cropResult.crop.x} ${cropResult.crop.y} ${cropResult.crop.width} ${cropResult.crop.height}`}
             width={cropResult.width}
           >
+            {polygonPoints ? (
+              <defs>
+                <clipPath id={polygonClipId}>
+                  <polygon points={polygonPoints} />
+                </clipPath>
+              </defs>
+            ) : null}
             <image
+              clipPath={polygonPoints ? `url(#${polygonClipId})` : undefined}
               height={imageSize.height}
               href={imageUrl}
               preserveAspectRatio="none"

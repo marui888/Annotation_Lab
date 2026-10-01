@@ -1,4 +1,5 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol } from 'electron'
+import { Buffer } from 'node:buffer'
 import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -124,6 +125,37 @@ function createExportFileName(task) {
   const id = sanitizeFileNamePart(task.annotationId || 'unknown', 'unknown')
   const ext = task.type === 'text' ? 'txt' : 'png'
   return `${index}_${role}_${type}_${id}.${ext}`
+}
+
+function createCompositeExportFileName(task) {
+  const index = String((task.index || 0) + 1).padStart(3, '0')
+  const type = sanitizeFileNamePart(
+    task.kind === 'annotation'
+      ? task.annotationType
+      : task.kind === 'file-copy'
+        ? task.fileKind
+        : 'text',
+    'item'
+  )
+  const role = task.kind === 'annotation' && task.role
+    ? `_${sanitizeFileNamePart(task.role, 'role')}`
+    : ''
+  const id = sanitizeFileNamePart(task.annotationId || task.cItemId || 'unknown', 'unknown')
+  const sourceExtension = task.kind === 'file-copy'
+    ? path.extname(task.sourceFilePath || '').toLowerCase()
+    : ''
+  const extension = task.kind === 'annotation'
+    ? task.annotationType === 'text' ? '.txt' : '.png'
+    : task.kind === 'file-copy'
+      ? sourceExtension || '.bin'
+      : '.txt'
+  return `${index}${role}_${type}_${id}${extension}`
+}
+
+function decodeImageDataUrl(dataUrl) {
+  const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/.exec(dataUrl || '')
+  if (!match) throw new Error('invalid-image-data-url')
+  return Buffer.from(match[1], 'base64')
 }
 
 function clampCropToMetadata(crop, metadata) {
@@ -718,7 +750,10 @@ app.whenReady().then(() => {
 
     try {
       const sourceFilePath = payload?.sourceFilePath
+      const sourceKind = payload?.sourceKind || 'image'
+      const mode = payload?.mode || (payload?.entity ? 'entity' : 'items')
       const outputFolder = payload?.outputFolder
+      const frameImages = Array.isArray(payload?.frameImages) ? payload.frameImages : []
       const tasks = Array.isArray(payload?.tasks) ? payload.tasks : []
       if (!sourceFilePath || !outputFolder || tasks.length === 0) {
         return { ok: false, reason: 'invalid-payload' }
@@ -734,8 +769,23 @@ app.whenReady().then(() => {
       await fs.mkdir(targetFolder, { recursive: true })
 
       const sharp = require('sharp')
-      const metadata = await sharp(sourceFilePath).metadata()
+      const frameImageDataUrls = new Map(frameImages.map((item) => [item.frameId, item.dataUrl]))
+      const imageInputCache = new Map()
+      const metadataCache = new Map()
       const exported = []
+
+      const getImageInput = (task) => {
+        if (sourceKind !== 'video') return { key: 'source-image', input: sourceFilePath }
+        const frameId = task.sourceFrameId
+        const dataUrl = frameImageDataUrls.get(frameId)
+        if (!frameId || !dataUrl) throw new Error(`missing-video-frame-image:${frameId || 'unknown'}`)
+        if (!imageInputCache.has(frameId)) {
+          const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/.exec(dataUrl)
+          if (!match) throw new Error(`invalid-video-frame-image:${frameId}`)
+          imageInputCache.set(frameId, Buffer.from(match[1], 'base64'))
+        }
+        return { key: frameId, input: imageInputCache.get(frameId) }
+      }
 
       for (const task of tasks) {
         const fileName = createExportFileName(task)
@@ -749,11 +799,26 @@ app.whenReady().then(() => {
               exported.push({ ok: false, annotationId: task.annotationId, reason: 'missing-crop' })
               continue
             }
+            const imageInput = getImageInput(task)
+            let metadata = metadataCache.get(imageInput.key)
+            if (!metadata) {
+              metadata = await sharp(imageInput.input).metadata()
+              metadataCache.set(imageInput.key, metadata)
+            }
             const crop = clampCropToMetadata(task.crop, metadata)
-            await sharp(sourceFilePath)
-              .extract(crop)
-              .png()
-              .toFile(outputPath)
+            let pipeline = sharp(imageInput.input).extract(crop)
+            if (task.type === 'polygon' && Array.isArray(task.polygonPoints)) {
+              const maskPoints = task.polygonPoints
+                .map((point) => `${Number(point.x) - crop.left},${Number(point.y) - crop.top}`)
+                .join(' ')
+              const maskSvg = Buffer.from(
+                `<svg width="${crop.width}" height="${crop.height}" xmlns="http://www.w3.org/2000/svg"><polygon points="${maskPoints}" fill="white" /></svg>`
+              )
+              pipeline = pipeline
+                .ensureAlpha()
+                .composite([{ input: maskSvg, blend: 'dest-in' }])
+            }
+            await pipeline.png().toFile(outputPath)
           }
 
           exported.push({
@@ -780,6 +845,7 @@ app.whenReady().then(() => {
 
       await fs.writeFile(path.join(targetFolder, '_export_manifest.json'), JSON.stringify({
         schemaVersion: 1,
+        mode,
         sourceFilePath,
         entity: entity
           ? {
@@ -809,6 +875,181 @@ app.whenReady().then(() => {
       if (targetFolder) {
         try {
           await fs.writeFile(path.join(targetFolder, '_export_errors.txt'), error.message || String(error), 'utf8')
+        } catch {
+          // Ignore secondary failure while reporting the original export error.
+        }
+      }
+      return {
+        ok: false,
+        folderPath: targetFolder,
+        reason: error.message || String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('export:compositeItems', async (_event, payload) => {
+    let targetFolder = ''
+
+    try {
+      const outputFolder = payload?.outputFolder
+      const tasks = Array.isArray(payload?.tasks) ? payload.tasks : []
+      const document = payload?.document || null
+      const mode = payload?.mode === 'selected' ? 'selected' : 'all'
+      if (!outputFolder || !document?.id || tasks.length === 0) {
+        return { ok: false, reason: 'invalid-payload' }
+      }
+
+      targetFolder = path.join(
+        outputFolder,
+        `${sanitizeFileNamePart(document.title, 'composite')}_${sanitizeFileNamePart(document.id, 'id')}`
+      )
+      await fs.mkdir(targetFolder, { recursive: true })
+
+      const sharp = require('sharp')
+      const metadataCache = new Map()
+      const imageInputCache = new Map()
+      const exported = []
+
+      const getAnnotationImageInput = (task) => {
+        if (task.imageDataUrl) {
+          const cacheKey = `frame:${task.sourceFilePath}:${task.sourceFrameId}`
+          if (!imageInputCache.has(cacheKey)) {
+            imageInputCache.set(cacheKey, decodeImageDataUrl(task.imageDataUrl))
+          }
+          return { key: cacheKey, input: imageInputCache.get(cacheKey) }
+        }
+        if (!task.sourceFilePath) throw new Error('source-file-path-empty')
+        return { key: `file:${task.sourceFilePath}`, input: task.sourceFilePath }
+      }
+
+      for (const task of tasks) {
+        const resultBase = {
+          index: task.index,
+          cItemId: task.cItemId || '',
+          cItemType: task.cItemType || '',
+          treePath: task.treePath || [],
+          sourceCompositePath: task.sourceCompositePath || '',
+          referencedCompositePath: task.referencedCompositePath || '',
+          annotationFilePath: task.annotationFilePath || '',
+          sourceFilePath: task.sourceFilePath || '',
+          displayTitle: task.displayTitle || '',
+          fileKind: task.fileKind || '',
+          entityId: task.entityId || '',
+          entityLabel: task.entityLabel || '',
+          entityItemIndex: Number.isFinite(task.entityItemIndex) ? task.entityItemIndex : null,
+          annotationId: task.annotationId || '',
+          annotationType: task.annotationType || '',
+          role: task.role || '',
+          sourceFrameId: task.sourceFrameId || '',
+          kind: task.kind || '',
+        }
+
+        if (task.kind === 'error') {
+          exported.push({
+            ...resultBase,
+            ok: false,
+            filePath: '',
+            reason: task.reason || 'prepare-export-task-failed',
+          })
+          continue
+        }
+
+        const fileName = createCompositeExportFileName(task)
+        const outputPath = path.join(targetFolder, fileName)
+
+        try {
+          if (task.kind === 'text') {
+            await fs.writeFile(outputPath, task.text || '', 'utf8')
+          } else if (task.kind === 'file-copy') {
+            if (!task.sourceFilePath) throw new Error('source-file-path-empty')
+            await fs.copyFile(task.sourceFilePath, outputPath)
+          } else if (task.kind === 'annotation') {
+            if (task.annotationType === 'text') {
+              await fs.writeFile(outputPath, task.text || '', 'utf8')
+            } else {
+              if (!task.crop) throw new Error('missing-crop')
+              const imageInput = getAnnotationImageInput(task)
+              let metadata = metadataCache.get(imageInput.key)
+              if (!metadata) {
+                metadata = await sharp(imageInput.input).metadata()
+                metadataCache.set(imageInput.key, metadata)
+              }
+              const crop = clampCropToMetadata(task.crop, metadata)
+              let pipeline = sharp(imageInput.input).extract(crop)
+              if (task.annotationType === 'polygon' && Array.isArray(task.polygonPoints)) {
+                const maskPoints = task.polygonPoints
+                  .map((point) => `${Number(point.x) - crop.left},${Number(point.y) - crop.top}`)
+                  .join(' ')
+                const maskSvg = Buffer.from(
+                  `<svg width="${crop.width}" height="${crop.height}" xmlns="http://www.w3.org/2000/svg"><polygon points="${maskPoints}" fill="white" /></svg>`
+                )
+                pipeline = pipeline
+                  .ensureAlpha()
+                  .composite([{ input: maskSvg, blend: 'dest-in' }])
+              }
+              await pipeline.png().toFile(outputPath)
+            }
+          } else {
+            throw new Error(`unsupported-export-task-kind:${task.kind || 'unknown'}`)
+          }
+
+          exported.push({
+            ...resultBase,
+            ok: true,
+            filePath: outputPath,
+            reason: '',
+          })
+        } catch (error) {
+          exported.push({
+            ...resultBase,
+            ok: false,
+            filePath: '',
+            reason: error.message || String(error),
+          })
+        }
+      }
+
+      const failed = exported.filter((item) => !item.ok)
+      const errorFilePath = path.join(targetFolder, '_export_errors.txt')
+      if (failed.length) {
+        const errorText = failed
+          .map((item) => `${item.cItemId || item.annotationId || 'unknown'}: ${item.reason || 'unknown error'}`)
+          .join('\n')
+        await fs.writeFile(errorFilePath, errorText, 'utf8')
+      } else {
+        await fs.rm(errorFilePath, { force: true })
+      }
+
+      await fs.writeFile(path.join(targetFolder, '_export_manifest.json'), JSON.stringify({
+        schemaVersion: 1,
+        exportType: 'composite-items',
+        mode,
+        composite: {
+          id: document.id || '',
+          title: document.title || '',
+          subject: document.subject || '',
+          kind: document.kind || '',
+          filePath: payload?.cDocumentFilePath || '',
+        },
+        selectedCItemId: mode === 'selected' ? payload?.selectedCItemId || '' : '',
+        exportedAt: new Date().toISOString(),
+        items: exported,
+      }, null, 2), 'utf8')
+
+      return {
+        ok: exported.some((item) => item.ok),
+        folderPath: targetFolder,
+        exported,
+        reason: failed.length === exported.length ? 'all-export-tasks-failed' : '',
+      }
+    } catch (error) {
+      if (targetFolder) {
+        try {
+          await fs.writeFile(
+            path.join(targetFolder, '_export_errors.txt'),
+            error.message || String(error),
+            'utf8'
+          )
         } catch {
           // Ignore secondary failure while reporting the original export error.
         }

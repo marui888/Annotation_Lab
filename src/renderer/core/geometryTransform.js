@@ -59,6 +59,55 @@ export function denormalizeArrow(geometry, size) {
   }
 }
 
+export function normalizePolygon(points, size) {
+  if (!size?.width || !size?.height || !Array.isArray(points)) return null
+
+  return {
+    points: points.map((point) => ({
+      x: point.x / size.width,
+      y: point.y / size.height,
+    })),
+  }
+}
+
+export function denormalizePolygon(geometry, size) {
+  if (!Array.isArray(geometry?.points) || !size?.width || !size?.height) return []
+
+  return geometry.points.map((point) => ({
+    x: point.x * size.width,
+    y: point.y * size.height,
+  }))
+}
+
+export function getPolygonBounds(points) {
+  if (!Array.isArray(points) || points.length === 0) return null
+  const xs = points.map((point) => point.x)
+  const ys = points.map((point) => point.y)
+  const left = Math.min(...xs)
+  const top = Math.min(...ys)
+  const right = Math.max(...xs)
+  const bottom = Math.max(...ys)
+
+  return {
+    x: left,
+    y: top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  }
+}
+
+export function movePolygonByDelta(points, dx, dy, size) {
+  const bounds = getPolygonBounds(points)
+  if (!bounds) return points
+  const safeDx = Math.max(-bounds.x, Math.min(dx, size.width - bounds.x - bounds.width))
+  const safeDy = Math.max(-bounds.y, Math.min(dy, size.height - bounds.y - bounds.height))
+
+  return points.map((point) => ({
+    x: point.x + safeDx,
+    y: point.y + safeDy,
+  }))
+}
+
 export function clampPointToSize(point, size) {
   return {
     x: Math.max(0, Math.min(point.x, size.width)),

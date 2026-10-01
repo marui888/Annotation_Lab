@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('labApi', {
   openCRef: () => ipcRenderer.invoke('file:openCRef'),
   chooseExportFolder: () => ipcRenderer.invoke('export:chooseFolder'),
   exportAnnotationCrops: (payload) => ipcRenderer.invoke('export:annotationCrops', payload),
+  exportCompositeItems: (payload) => ipcRenderer.invoke('export:compositeItems', payload),
   listSubjectSchemas: () => ipcRenderer.invoke('schema:list'),
   openSubjectSchema: () => ipcRenderer.invoke('schema:open'),
   readSubjectSchemaFile: (filePath) => ipcRenderer.invoke('schema:readFile', filePath),

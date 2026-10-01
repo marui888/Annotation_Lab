@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import ABEditor from './renderer/ab-editor/ABEditor'
 import AppTooltip from './renderer/components/AppTooltip'
 import CompositeEditor from './renderer/c-editor/CompositeEditor'
+import { prepareCompositeExport } from './renderer/c-editor/compositeExport'
 import {
   createAnnotationEditorInput,
   createImageEditorInput,
@@ -505,6 +506,7 @@ function App() {
   const [selectedEntityId, setSelectedEntityId] = useState(null)
   const [cWorkspaces, setCWorkspaces] = useState({})
   const [pendingImageSwitch, setPendingImageSwitch] = useState(null)
+  const [pendingAnnotationDelete, setPendingAnnotationDelete] = useState(null)
   const [pendingEditorCloseSessionId, setPendingEditorCloseSessionId] = useState(null)
   const [workspaceTabMenu, setWorkspaceTabMenu] = useState(null)
   const [currentABInput, setCurrentABInput] = useState(null)
@@ -518,6 +520,7 @@ function App() {
   const [bindFrameDialogPosition, setBindFrameDialogPosition] = useState(null)
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS)
   const [settingsDialog, setSettingsDialog] = useState(null)
+  const [exportResultDialog, setExportResultDialog] = useState(null)
   const [registeredActions, setRegisteredActions] = useState([])
   const [pendingShortcutCapture, setPendingShortcutCapture] = useState(null)
   const [bindFrameDialogDrag, setBindFrameDialogDrag] = useState(null)
@@ -1713,28 +1716,6 @@ function App() {
     startLoadInCurrentEditor(target)
   }
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      const targetTag = event.target?.tagName?.toLowerCase()
-      if (targetTag === 'textarea' || targetTag === 'input') return
-      if (event.key !== 'Delete') return
-      if (selectedAnnotationIds.length === 0) return
-      setAnnotations((current) => current.filter((annotation) => !selectedAnnotationIds.includes(annotation.id)))
-      setEntities((current) => current.map((entity) => ({
-        ...entity,
-        ...createACardPatch(removeACardsByAObjectIds(getEntityACardTree(entity), selectedAnnotationIds)),
-      })))
-      setLastPreviewAnnotationId((current) => (
-        selectedAnnotationIds.includes(current) ? null : current
-      ))
-      setSelectedAnnotationIds([])
-      setSaveStatus('Unsaved')
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedAnnotationIds])
-
   const setFitZoom = () => {
     setZoomMode('fit')
     setZoom(1)
@@ -1776,7 +1757,6 @@ function App() {
     setAnnotations((current) => [...current, nextAnnotation])
     setLastPreviewAnnotationId(nextAnnotation.id)
     setSelectedAnnotationIds([nextAnnotation.id])
-    setToolMode('select')
     setSaveStatus('Unsaved')
   }
 
@@ -1785,7 +1765,6 @@ function App() {
     setAnnotations((current) => [...current, nextAnnotation])
     setLastPreviewAnnotationId(nextAnnotation.id)
     setSelectedAnnotationIds([nextAnnotation.id])
-    setToolMode('select')
     setEditingTextId(nextAnnotation.id)
     setTextDraft(nextAnnotation.text || '')
     setSaveStatus('Unsaved')
@@ -1864,19 +1843,74 @@ function App() {
     setEntityMenu(null)
   }
 
-  const deleteSelectedAnnotation = () => {
+  const deleteSelectedAnnotation = useCallback(() => {
     if (selectedAnnotationIds.length === 0) return
-    setAnnotations((current) => current.filter((annotation) => !selectedAnnotationIds.includes(annotation.id)))
+    const annotationIds = [...selectedAnnotationIds]
+    const selectedIdSet = new Set(annotationIds)
+    const typeCounts = annotations.reduce((counts, annotation) => {
+      if (!selectedIdSet.has(annotation.id)) return counts
+      const type = annotation.type || 'unknown'
+      counts[type] = (counts[type] || 0) + 1
+      return counts
+    }, {})
+    const typeLabels = {
+      arrow: 'Arrow',
+      polygon: 'Polygon',
+      rect: 'Rect',
+      text: 'Text',
+      unknown: 'Unknown',
+    }
+    const typeSummary = Object.entries(typeCounts)
+      .map(([type, count]) => `${typeLabels[type] || type} × ${count}`)
+      .join(', ')
+    const referencedEntityCount = entities.reduce((count, entity) => {
+      const usesSelectedObject = flattenACardTree(getEntityACardTree(entity))
+        .some((card) => selectedIdSet.has(card.aObjectId))
+      return count + (usesSelectedObject ? 1 : 0)
+    }, 0)
+
+    setPendingAnnotationDelete({
+      annotationIds,
+      objectCount: annotationIds.length,
+      referencedEntityCount,
+      typeSummary,
+    })
+  }, [annotations, entities, selectedAnnotationIds])
+
+  const confirmDeleteSelectedAnnotations = () => {
+    if (!pendingAnnotationDelete) return
+    const annotationIds = pendingAnnotationDelete.annotationIds || []
+    if (annotationIds.length === 0) {
+      setPendingAnnotationDelete(null)
+      return
+    }
+    setAnnotations((current) => current.filter((annotation) => !annotationIds.includes(annotation.id)))
     setEntities((current) => current.map((entity) => ({
       ...entity,
-      ...createACardPatch(removeACardsByAObjectIds(getEntityACardTree(entity), selectedAnnotationIds)),
+      ...createACardPatch(removeACardsByAObjectIds(getEntityACardTree(entity), annotationIds)),
     })))
     setLastPreviewAnnotationId((current) => (
-      selectedAnnotationIds.includes(current) ? null : current
+      annotationIds.includes(current) ? null : current
     ))
     setSelectedAnnotationIds([])
+    setPendingAnnotationDelete(null)
     setSaveStatus('Unsaved')
   }
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      const target = event.target
+      const targetTag = target?.tagName?.toLowerCase()
+      if (targetTag === 'textarea' || targetTag === 'input' || targetTag === 'select' || target?.isContentEditable) return
+      if (event.key !== 'Delete') return
+      if (selectedAnnotationIds.length === 0 || pendingAnnotationDelete) return
+      event.preventDefault()
+      deleteSelectedAnnotation()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [deleteSelectedAnnotation, pendingAnnotationDelete, selectedAnnotationIds])
 
   const requestBindSelectedAnnotationsToCurrentPlaybackFrame = () => {
     if (source?.kind !== 'video') {
@@ -2097,6 +2131,7 @@ function App() {
       { id: 'picture.tool.select', handler: () => actionHandlersRef.current.setToolMode?.('select') },
       { id: 'picture.tool.rect', handler: () => actionHandlersRef.current.setToolMode?.('rect') },
       { id: 'picture.tool.arrow', handler: () => actionHandlersRef.current.setToolMode?.('arrow') },
+      { id: 'picture.tool.polygon', handler: () => actionHandlersRef.current.setToolMode?.('polygon') },
       { id: 'picture.tool.text', handler: () => actionHandlersRef.current.setToolMode?.('text') },
       { id: 'picture.deleteSelected', handler: () => actionHandlersRef.current.deleteSelectedAnnotation?.() },
       { id: 'picture.zoom.fit', handler: () => actionHandlersRef.current.setFitZoom?.() },
@@ -2123,6 +2158,46 @@ function App() {
     return unregister
   }, [])
 
+  const showExportResult = ({
+    title,
+    result = null,
+    outputFolder = '',
+    requestedCount = 0,
+    entityCount = 0,
+    aObjectCount = 0,
+    otherItemCount = 0,
+    reason = '',
+  }) => {
+    const exported = Array.isArray(result?.exported) ? result.exported : []
+    const successCount = exported.filter((item) => item.ok).length
+    const failedCount = exported.length > 0
+      ? exported.length - successCount
+      : result?.ok ? 0 : Math.max(1, requestedCount)
+    const reasons = Array.from(new Set([
+      ...exported.filter((item) => !item.ok).map((item) => item.reason),
+      reason,
+      result?.reason,
+    ].filter(Boolean)))
+    const status = successCount > 0 && failedCount > 0
+      ? 'partial'
+      : result?.ok && failedCount === 0
+        ? 'success'
+        : 'failed'
+
+    setExportResultDialog({
+      title,
+      status,
+      folderPath: result?.folderPath || outputFolder || '',
+      requestedCount: exported.length || Math.max(requestedCount, result?.ok ? 0 : 1),
+      successCount,
+      failedCount,
+      entityCount,
+      aObjectCount,
+      otherItemCount,
+      reasons,
+    })
+  }
+
   const chooseExportFolder = async () => {
     const result = await window.labApi?.chooseExportFolder?.()
     if (!result?.ok) {
@@ -2132,65 +2207,258 @@ function App() {
     return result.folderPath || ''
   }
 
-  const exportTasks = async ({ outputFolder, tasks, entity = null }) => {
-    if (!source?.filePath || !outputFolder || tasks.length === 0) return false
-    const result = await window.labApi?.exportAnnotationCrops?.({
-      sourceFilePath: source.filePath,
-      outputFolder,
-      entity,
-      tasks,
-    })
-    if (result?.ok) {
-      const okCount = result.exported?.filter((item) => item.ok).length || 0
-      const totalCount = result.exported?.length || tasks.length
-      const failedCount = totalCount - okCount
-      setMessage(`Exported ${okCount}/${totalCount} item(s) to ${result.folderPath}${failedCount ? ' ; see _export_errors.txt' : ''}`)
-      return true
+  const exportTasks = async ({
+    outputFolder,
+    tasks,
+    entity = null,
+    frameImages = [],
+    mode = 'items',
+    summary = {},
+  }) => {
+    if (!source?.filePath || !outputFolder || tasks.length === 0) {
+      showExportResult({
+        ...summary,
+        outputFolder,
+        requestedCount: tasks.length,
+        reason: 'invalid-export-request',
+      })
+      return false
     }
-    setMessage(`Export failed: ${result?.reason || 'unknown error'}`)
-    return false
+    try {
+      const result = await window.labApi?.exportAnnotationCrops?.({
+        sourceKind: source.kind,
+        sourceFilePath: source.filePath,
+        outputFolder,
+        entity,
+        frameImages,
+        mode,
+        tasks,
+      })
+      const okCount = result?.exported?.filter((item) => item.ok).length || 0
+      const totalCount = result?.exported?.length || tasks.length
+      const failedCount = totalCount - okCount
+      if (result?.ok) {
+        setMessage(`Exported ${okCount}/${totalCount} item(s) to ${result.folderPath}${failedCount ? ' ; see _export_errors.txt' : ''}`)
+      } else {
+        setMessage(`Export failed: ${result?.reason || 'unknown error'}`)
+      }
+      showExportResult({
+        ...summary,
+        result,
+        outputFolder,
+        requestedCount: tasks.length,
+      })
+      return Boolean(result?.ok)
+    } catch (error) {
+      const reason = error?.message || String(error)
+      setMessage(`Export failed: ${reason}`)
+      showExportResult({
+        ...summary,
+        outputFolder,
+        requestedCount: tasks.length,
+        reason,
+      })
+      return false
+    }
+  }
+
+  const prepareAnnotationExportBatch = async (entries = []) => {
+    const snapshotPromises = new Map()
+    const frameImagesById = new Map()
+
+    const getVideoSnapshot = (annotation) => {
+      const videoTarget = getAnnotationVideoTarget(annotation)
+      if (!videoTarget) {
+        return Promise.resolve({ ok: false, reason: 'video-frame-target-unavailable' })
+      }
+
+      const frameId = videoTarget.frame.id
+      if (snapshotPromises.has(frameId)) return snapshotPromises.get(frameId)
+
+      const cached = framePreviewCache[frameId]
+      if (cached?.imageUrl && cached?.imageSize) {
+        const cachedResult = Promise.resolve({
+          ok: true,
+          frameId,
+          imageUrl: cached.imageUrl,
+          imageSize: cached.imageSize,
+        })
+        snapshotPromises.set(frameId, cachedResult)
+        return cachedResult
+      }
+
+      if (frame?.id === frameId && framePreviewUrl && imageSize) {
+        const currentResult = Promise.resolve({
+          ok: true,
+          frameId,
+          imageUrl: framePreviewUrl,
+          imageSize,
+        })
+        snapshotPromises.set(frameId, currentResult)
+        return currentResult
+      }
+
+      const snapshotPromise = captureVideoFrameSnapshot({
+        src: source?.fileUrl,
+        time: videoTarget.time,
+      }).then((result) => {
+        if (!result?.ok) return result
+        const normalizedResult = {
+          ok: true,
+          frameId,
+          imageUrl: result.previewUrl,
+          imageSize: result.imageSize,
+        }
+        setFramePreviewCache((current) => ({
+          ...current,
+          [frameId]: normalizedResult,
+        }))
+        return normalizedResult
+      })
+      snapshotPromises.set(frameId, snapshotPromise)
+      return snapshotPromise
+    }
+
+    const prepared = await Promise.all(entries.map(async ({ annotation, options = {} }) => {
+      if (!annotation) return { ok: false, reason: 'annotation-not-found' }
+
+      if (source?.kind !== 'video' || annotation.type === 'text') {
+        const task = createAnnotationExportTask(annotation, imageSize, options)
+        return task ? { ok: true, task } : { ok: false, reason: 'invalid-a-object' }
+      }
+
+      const snapshot = await getVideoSnapshot(annotation)
+      if (!snapshot?.ok || !snapshot.imageUrl || !snapshot.imageSize) {
+        return {
+          ok: false,
+          reason: snapshot?.reason || 'video-frame-snapshot-failed',
+        }
+      }
+
+      const task = createAnnotationExportTask(annotation, snapshot.imageSize, options)
+      if (!task) return { ok: false, reason: 'invalid-a-object' }
+      frameImagesById.set(snapshot.frameId, {
+        frameId: snapshot.frameId,
+        dataUrl: snapshot.imageUrl,
+      })
+      return {
+        ok: true,
+        task: {
+          ...task,
+          sourceFrameId: snapshot.frameId,
+        },
+      }
+    }))
+
+    const failed = prepared.find((item) => !item.ok)
+    if (failed) return { ok: false, reason: failed.reason }
+    return {
+      ok: true,
+      tasks: prepared.map((item) => item.task),
+      frameImages: [...frameImagesById.values()],
+    }
   }
 
   const exportSingleAnnotationCrop = async (annotationIds = selectedAnnotationIds) => {
-    if (!source || !imageSize || annotationIds.length !== 1) return false
+    if (!source || annotationIds.length !== 1) return false
     const annotation = annotations.find((item) => item.id === annotationIds[0])
-    const task = createAnnotationExportTask(annotation, imageSize)
-    if (!task) {
-      setMessage('Export failed: invalid A object.')
-      return false
-    }
+    if (!annotation) return false
     const outputFolder = await chooseExportFolder()
     if (!outputFolder) return false
-    return exportTasks({ outputFolder, tasks: [task] })
-  }
-
-  const exportEntityCrops = async (entity = entities.find((item) => item.id === selectedEntityId) || null) => {
-    if (!source || !imageSize || !entity) return false
-    const refs = getEntityAObjectRefs(entity)
-    const tasks = refs
-      .map((ref, index) => {
-        const annotation = annotations.find((item) => item.id === ref.aObjectId)
-        return createAnnotationExportTask(annotation, imageSize, {
-          index,
-          role: ref.role,
-        })
+    setMessage(source.kind === 'video' ? 'Preparing video frame for export...' : 'Preparing export...')
+    const prepared = await prepareAnnotationExportBatch([{ annotation }])
+    if (!prepared.ok) {
+      setMessage(`Export failed: ${prepared.reason}`)
+      showExportResult({
+        title: 'Export Crop',
+        outputFolder,
+        requestedCount: 1,
+        aObjectCount: 1,
+        reason: prepared.reason,
       })
-      .filter(Boolean)
-    if (tasks.length === 0) {
-      setMessage('Export failed: current Entity has no exportable A object.')
       return false
     }
-    const outputFolder = await chooseExportFolder()
-    if (!outputFolder) return false
     return exportTasks({
       outputFolder,
-      tasks,
+      tasks: prepared.tasks,
+      frameImages: prepared.frameImages,
+      mode: 'single-a-object',
+      summary: {
+        title: 'Export Crop',
+        aObjectCount: 1,
+      },
+    })
+  }
+
+  const exportEntityCrops = async (
+    entity = entities.find((item) => item.id === selectedEntityId) || null,
+    selectedCards = null,
+  ) => {
+    if (!source || !entity) return false
+    const selectedMode = Array.isArray(selectedCards)
+    const refs = selectedMode
+      ? selectedCards.map((card) => ({
+          aObjectId: card.aObjectId,
+          role: card.role,
+        }))
+      : getEntityAObjectRefs(entity)
+    const exportTitle = selectedMode ? 'Export Selected' : 'Export Entity'
+    const entries = refs.map((ref, index) => {
+      const annotation = annotations.find((item) => item.id === ref.aObjectId)
+      return {
+        annotation,
+        options: {
+          index,
+          role: ref.role,
+        },
+      }
+    })
+    if (entries.length === 0) {
+      setMessage('Export failed: current Entity has no exportable A object.')
+      showExportResult({
+        title: exportTitle,
+        requestedCount: 0,
+        entityCount: 1,
+        reason: 'current Entity has no exportable A object',
+      })
+      return false
+    }
+    const outputFolder = await chooseExportFolder()
+    if (!outputFolder) return false
+    setMessage(source.kind === 'video' ? 'Preparing video frames for export...' : 'Preparing export...')
+    const prepared = await prepareAnnotationExportBatch(entries)
+    if (!prepared.ok) {
+      setMessage(`Export failed: ${prepared.reason}`)
+      showExportResult({
+        title: exportTitle,
+        outputFolder,
+        requestedCount: entries.length,
+        entityCount: 1,
+        aObjectCount: entries.length,
+        reason: prepared.reason,
+      })
+      return false
+    }
+    return exportTasks({
+      outputFolder,
+      tasks: prepared.tasks,
+      frameImages: prepared.frameImages,
+      mode: selectedMode ? 'selected-entity-items' : 'entity',
+      summary: {
+        title: exportTitle,
+        entityCount: 1,
+        aObjectCount: entries.length,
+      },
       entity: {
         id: entity.id,
         label: entity.label,
       },
     })
   }
+
+  const exportSelectedEntityItems = (entity, selectedCards) => (
+    exportEntityCrops(entity, selectedCards)
+  )
 
   const editingTextAnnotation = editingTextId
     ? annotations.find((annotation) => annotation.id === editingTextId && annotation.type === 'text')
@@ -2205,6 +2473,9 @@ function App() {
     }
     if (annotation.type === 'text') {
       return annotation.text || 'FreeText'
+    }
+    if (annotation.type === 'polygon') {
+      return `${annotation.geometry?.points?.length || 0} vertices`
     }
     return annotation.id
   }
@@ -3164,6 +3435,88 @@ function App() {
     })
   }
 
+  const exportCompositeItems = async (mode = 'all') => {
+    const selectedCItemId = activeCWorkspace.selectedCItemId
+    if (mode === 'selected' && !selectedCItemId) return false
+    if (activeCWorkspace.cDocument.items.length === 0) return false
+
+    const outputFolder = await chooseExportFolder()
+    if (!outputFolder) return false
+    setMessage(mode === 'selected'
+      ? 'Preparing selected Composite item for export...'
+      : 'Preparing Composite export...')
+
+    try {
+      const prepared = await prepareCompositeExport({
+        cDocument: activeCWorkspace.cDocument,
+        cDocumentFilePath: activeCWorkspace.cDocumentFilePath,
+        mode,
+        selectedCItemId,
+      })
+      if (!prepared.ok || prepared.tasks.length === 0) {
+        const reason = prepared.reason || 'no-exportable-item'
+        setMessage(`Composite export failed: ${reason}`)
+        showExportResult({
+          title: mode === 'selected' ? 'Export Selected Composite Item' : 'Export Composite',
+          outputFolder,
+          requestedCount: mode === 'selected' ? 1 : activeCWorkspace.cDocument.items.length,
+          reason,
+        })
+        return false
+      }
+
+      const entityItems = new Set(prepared.tasks
+        .filter((task) => task.entityId)
+        .map((task) => `${task.sourceCompositePath || ''}:${task.cItemId || task.entityId}`))
+      const aObjectCount = prepared.tasks.filter((task) => task.annotationId).length
+      const otherItemCount = prepared.tasks.filter((task) => (
+        task.kind === 'text' || task.kind === 'file-copy'
+      )).length
+
+      const result = await window.labApi?.exportCompositeItems?.({
+        outputFolder,
+        cDocumentFilePath: activeCWorkspace.cDocumentFilePath,
+        document: {
+          id: activeCWorkspace.cDocument.id,
+          title: activeCWorkspace.cDocument.title,
+          subject: activeCWorkspace.cDocument.subject,
+          kind: activeCWorkspace.cDocument.kind,
+        },
+        mode,
+        selectedCItemId,
+        tasks: prepared.tasks,
+      })
+      const okCount = result?.exported?.filter((item) => item.ok).length || 0
+      const totalCount = result?.exported?.length || prepared.tasks.length
+      const failedCount = totalCount - okCount
+      if (result?.ok) {
+        setMessage(`Exported ${okCount}/${totalCount} Composite item(s) to ${result.folderPath}${failedCount ? ' ; see _export_errors.txt' : ''}`)
+      } else {
+        setMessage(`Composite export failed: ${result?.reason || 'unknown error'}${result?.folderPath ? ` ; see ${result.folderPath}` : ''}`)
+      }
+      showExportResult({
+        title: mode === 'selected' ? 'Export Selected Composite Item' : 'Export Composite',
+        result,
+        outputFolder,
+        requestedCount: prepared.tasks.length,
+        entityCount: entityItems.size,
+        aObjectCount,
+        otherItemCount,
+      })
+      return Boolean(result?.ok)
+    } catch (error) {
+      const reason = error?.message || String(error)
+      setMessage(`Composite export failed: ${reason}`)
+      showExportResult({
+        title: mode === 'selected' ? 'Export Selected Composite Item' : 'Export Composite',
+        outputFolder,
+        requestedCount: mode === 'selected' ? 1 : activeCWorkspace.cDocument.items.length,
+        reason,
+      })
+      return false
+    }
+  }
+
   const deleteCItem = (itemId) => {
     if (!window.confirm('Delete this C item?')) return
     const deletedItem = activeCWorkspace.cDocument.items.find((item) => item.id === itemId)
@@ -3596,6 +3949,7 @@ function App() {
               <button className={toolMode === 'select' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.select')} type="button">Select</button>
               <button className={toolMode === 'rect' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.rect')} type="button">Rect</button>
               <button className={toolMode === 'arrow' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.arrow')} type="button">Arrow</button>
+              <button className={toolMode === 'polygon' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.polygon')} type="button">Polygon</button>
               <button className={toolMode === 'text' ? 'active-tool' : ''} onClick={() => runAction('picture.tool.text')} type="button">Text</button>
               <button disabled={selectedAnnotationIds.length === 0} onClick={() => runAction('picture.deleteSelected')} type="button">Delete</button>
             </section>
@@ -3762,6 +4116,8 @@ function App() {
             onAddTextItem={addTextItemToCDocument}
             onChangeItems={changeCItems}
             onDeleteItem={deleteCItem}
+            onExport={() => exportCompositeItems('all')}
+            onExportSelected={() => exportCompositeItems('selected')}
             onOpenBRef={openBRefFromCItem}
             onOpenCRef={openCRefFromCItem}
             onScanAnnotationFiles={scanBEntityAnnotationFiles}
@@ -3813,6 +4169,7 @@ function App() {
               onEditTextAnnotation={startEditTextAnnotation}
               onExportSelectedAnnotationCrop={exportSingleAnnotationCrop}
               onExportSelectedEntity={exportEntityCrops}
+              onExportSelectedEntityItems={exportSelectedEntityItems}
               onAppendSimpleNote={() => appendSimpleNoteMark()}
               onAppendQuickSimpleNote={() => appendSimpleNoteMark({ quick: true })}
               onQuickUpdateSimpleNoteRange={quickUpdateSimpleNoteRange}
@@ -4037,6 +4394,34 @@ function App() {
             </div>
           )
         })()
+      ) : null}
+
+      {pendingAnnotationDelete ? (
+        <div className="dialog-layer">
+          <div className="entity-dialog">
+            <div className="dialog-title">Delete A Object</div>
+            <dl className="dialog-info">
+              <dt>A Objects</dt>
+              <dd>{pendingAnnotationDelete.objectCount}</dd>
+              <dt>Types</dt>
+              <dd>{pendingAnnotationDelete.typeSummary || '--'}</dd>
+              <dt>Used by</dt>
+              <dd>
+                {pendingAnnotationDelete.referencedEntityCount}{' '}
+                {pendingAnnotationDelete.referencedEntityCount === 1 ? 'Entity' : 'Entities'}
+              </dd>
+            </dl>
+            <div className="dialog-message">
+              {pendingAnnotationDelete.referencedEntityCount > 0
+                ? `${pendingAnnotationDelete.referencedEntityCount} ${pendingAnnotationDelete.referencedEntityCount === 1 ? 'Entity uses' : 'Entities use'} the selected A Object(s). Their references to these objects will also be removed.`
+                : 'No Entity uses the selected A Object(s).'}
+            </div>
+            <div className="dialog-actions">
+              <button autoFocus onClick={confirmDeleteSelectedAnnotations} type="button">Delete</button>
+              <button onClick={() => setPendingAnnotationDelete(null)} type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {pendingImageSwitch ? (
@@ -4349,6 +4734,55 @@ function App() {
             <div className="dialog-actions">
               <button onClick={saveEntityDialog} type="button">OK</button>
               <button onClick={closeEntityDialog} type="button">Cancel</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {exportResultDialog ? (
+        <div className="dialog-layer">
+          <div className="entity-dialog export-result-dialog">
+            <div className="dialog-title">{exportResultDialog.title}</div>
+            <div className={`export-result-status ${exportResultDialog.status}`}>
+              {exportResultDialog.status === 'success'
+                ? 'Export succeeded'
+                : exportResultDialog.status === 'partial'
+                  ? 'Export partially succeeded'
+                  : 'Export failed'}
+            </div>
+            <dl className="dialog-info export-result-summary">
+              <dt>Location</dt>
+              <dd className="export-result-path" title={exportResultDialog.folderPath || ''}>
+                {exportResultDialog.folderPath || '--'}
+              </dd>
+              <dt>Requested</dt>
+              <dd>{exportResultDialog.requestedCount}</dd>
+              <dt>Succeeded</dt>
+              <dd>{exportResultDialog.successCount}</dd>
+              <dt>Failed</dt>
+              <dd>{exportResultDialog.failedCount}</dd>
+              <dt>Entities</dt>
+              <dd>{exportResultDialog.entityCount}</dd>
+              <dt>A Objects</dt>
+              <dd>{exportResultDialog.aObjectCount}</dd>
+              <dt>Text / Image files</dt>
+              <dd>{exportResultDialog.otherItemCount}</dd>
+            </dl>
+            {exportResultDialog.reasons.length ? (
+              <div className="export-result-errors">
+                <strong>Error summary</strong>
+                <ul>
+                  {exportResultDialog.reasons.slice(0, 5).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+                {exportResultDialog.reasons.length > 5 ? (
+                  <small>More errors are recorded in _export_errors.txt.</small>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="dialog-actions">
+              <button autoFocus onClick={() => setExportResultDialog(null)} type="button">Close</button>
             </div>
           </div>
         </div>

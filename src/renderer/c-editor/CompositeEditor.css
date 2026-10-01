@@ -8,17 +8,24 @@
 }
 
 .c-source-actions,
-.c-item-toolbar {
+.c-item-toolbar,
+.c-export-toolbar {
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
 }
 
 .c-source-actions button,
-.c-item-toolbar button {
+.c-item-toolbar button,
+.c-export-toolbar button {
   height: 25px;
   padding: 0 8px;
   font-size: 12px;
+}
+
+.c-export-toolbar {
+  padding-top: 7px;
+  border-top: 1px solid #292929;
 }
 
 .c-editor-body {

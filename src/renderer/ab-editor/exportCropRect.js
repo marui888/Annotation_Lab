@@ -1,4 +1,9 @@
-import { denormalizeArrow, denormalizeRect } from '../core/geometryTransform'
+import {
+  denormalizeArrow,
+  denormalizePolygon,
+  denormalizeRect,
+  getPolygonBounds,
+} from '../core/geometryTransform'
 
 const ARROW_EXPORT_PADDING = 16
 
@@ -67,6 +72,17 @@ export function createAnnotationExportTask(annotation, imageSize, options = {}) 
     return {
       ...baseTask,
       crop: toIntegerCrop(rect, imageSize),
+    }
+  }
+
+  if (annotation.type === 'polygon') {
+    const points = denormalizePolygon(annotation.geometry, imageSize)
+    const bounds = getPolygonBounds(points)
+    if (!bounds || points.length < 3) return null
+    return {
+      ...baseTask,
+      crop: toIntegerCrop(bounds, imageSize),
+      polygonPoints: points,
     }
   }
 

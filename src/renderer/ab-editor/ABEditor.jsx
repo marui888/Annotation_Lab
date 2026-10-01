@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MediaAnnotationLayer from '../annotation/MediaAnnotationLayer'
 import BWorkflow from '../workflow/BWorkflow'
-import { denormalizeArrow, denormalizeRect } from '../core/geometryTransform'
+import {
+  denormalizeArrow,
+  denormalizePolygon,
+  denormalizeRect,
+  getPolygonBounds,
+} from '../core/geometryTransform'
 import { createVideoFrame } from '../media/videoAdapter'
 import VideoPlayer from '../video/VideoPlayer'
 import { runAction } from '../actions/actionRegistry'
@@ -40,6 +45,14 @@ function getVideoAnnotationDragChipStyle(annotation, imageDisplaySize) {
       left: Math.max(2, Math.min(arrow.x1, arrow.x2) + 4),
       top: Math.max(2, Math.min(arrow.y1, arrow.y2) + 4),
     }
+  }
+
+  if (annotation.type === 'polygon') {
+    const bounds = getPolygonBounds(denormalizePolygon(annotation.geometry, imageDisplaySize))
+    return bounds ? {
+      left: Math.max(2, bounds.x + 4),
+      top: Math.max(2, bounds.y + 4),
+    } : null
   }
 
   return null
@@ -327,6 +340,7 @@ function VideoFramePanel({
               annotations={visibleAnnotations}
               displayScale={displayScale}
               frameId={currentFrame?.id || 'bind-preview-frame'}
+              key={`video-annotation-layer-${toolMode}`}
               mode={toolMode}
               onAddAnnotation={onAddAnnotation}
               onAddTextAnnotation={onAddTextAnnotation}
@@ -336,6 +350,7 @@ function VideoFramePanel({
               onClearSelection={onClearSelection}
               onEditTextAnnotation={onEditTextAnnotation}
               onSelectAnnotation={onSelectAnnotation}
+              onToolModeChange={onToolModeChange}
               onUpdateAnnotation={onUpdateAnnotation}
               selectedAnnotationIds={selectedAnnotationIds}
               size={imageDisplaySize}
@@ -432,6 +447,7 @@ export default function ABEditor({
   onEditTextAnnotation,
   onExportSelectedAnnotationCrop,
   onExportSelectedEntity,
+  onExportSelectedEntityItems,
   canGoToAnnotation,
   onGoToAnnotation,
   onImageSizeChange,
@@ -834,6 +850,15 @@ export default function ABEditor({
       }
     }
 
+
+    if (annotation.type === 'polygon') {
+      const bounds = getPolygonBounds(denormalizePolygon(annotation.geometry, imageDisplaySize))
+      return bounds ? {
+        left: Math.max(2, bounds.x + 4),
+        top: Math.max(2, bounds.y + 4),
+      } : null
+    }
+
     return null
   }
 
@@ -922,6 +947,7 @@ export default function ABEditor({
                       <MediaAnnotationLayer
                         annotations={annotations}
                         frameId={frame?.id}
+                        key={`image-annotation-layer-${toolMode}`}
                         mode={toolMode}
                         onAddAnnotation={onAddAnnotation}
                         onAddTextAnnotation={onAddTextAnnotation}
@@ -931,6 +957,7 @@ export default function ABEditor({
                         onClearSelection={onClearSelection}
                         onEditTextAnnotation={onEditTextAnnotation}
                         onSelectAnnotation={onSelectAnnotation}
+                        onToolModeChange={onToolModeChange}
                         onUpdateAnnotation={onUpdateAnnotation}
                         selectedAnnotationIds={selectedAnnotationIds}
                         size={imageDisplaySize}
@@ -1088,6 +1115,7 @@ export default function ABEditor({
           imageUrl={isVideoSource ? undefined : framePreviewUrl}
           imageSize={isVideoSource ? undefined : imageSize}
           onExportEntity={onExportSelectedEntity}
+          onExportSelectedEntityItems={onExportSelectedEntityItems}
           canGoToAnnotation={canGoToAnnotation}
           onGoToAnnotation={onGoToAnnotation}
           selectedAnnotationIds={selectedAnnotationIds}
@@ -1126,6 +1154,7 @@ export default function ABEditor({
           <button className={toolMode === 'select' ? 'active-menu-item' : ''} onClick={() => switchCanvasMode('select')} type="button">Select</button>
           <button className={toolMode === 'rect' ? 'active-menu-item' : ''} onClick={() => switchCanvasMode('rect')} type="button">Rect</button>
           <button className={toolMode === 'arrow' ? 'active-menu-item' : ''} onClick={() => switchCanvasMode('arrow')} type="button">Arrow</button>
+          <button className={toolMode === 'polygon' ? 'active-menu-item' : ''} onClick={() => switchCanvasMode('polygon')} type="button">Polygon</button>
           <button className={toolMode === 'text' ? 'active-menu-item' : ''} onClick={() => switchCanvasMode('text')} type="button">Text</button>
           <div className="context-menu-separator" />
           <button disabled={!source || !isDirty} onClick={saveFromCanvasMenu} type="button">Save JSON</button>

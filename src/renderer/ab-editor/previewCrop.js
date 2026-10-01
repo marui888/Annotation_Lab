@@ -1,4 +1,9 @@
-import { denormalizeArrow, denormalizeRect } from '../core/geometryTransform'
+import {
+  denormalizeArrow,
+  denormalizePolygon,
+  denormalizeRect,
+  getPolygonBounds,
+} from '../core/geometryTransform'
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -33,6 +38,11 @@ export function getAnnotationCropRect(annotation, imageSize) {
       width: Math.abs(arrow.x2 - arrow.x1),
       height: Math.abs(arrow.y2 - arrow.y1),
     }, imageSize)
+  }
+
+  if (annotation.type === 'polygon') {
+    const bounds = getPolygonBounds(denormalizePolygon(annotation.geometry, imageSize))
+    return bounds ? createStrictCropRect(bounds, imageSize) : null
   }
 
   return null

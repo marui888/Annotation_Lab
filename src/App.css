@@ -1029,25 +1029,32 @@ button.active-tool {
 .media-statusbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 8px;
   border-top: 1px solid #333;
-  background: #171717;
-  color: #9e9788;
-  font-size: 12px;
+  background: #151515;
+  color: #9f9788;
+  font-size: 11px;
   overflow: hidden;
 }
 
 .media-statusbar span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
   white-space: nowrap;
 }
 
 .media-statusbar strong {
-  color: #ffd45a;
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #d8cfbe;
   font-weight: 600;
 }
 
@@ -1955,6 +1962,64 @@ button.active-tool {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.export-result-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.export-result-status {
+  padding: 7px 9px;
+  border: 1px solid #555;
+  background: #171717;
+  color: #ddd4c0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.export-result-status.success {
+  border-color: #39794d;
+  color: #8fe0a7;
+}
+
+.export-result-status.partial {
+  border-color: #92742d;
+  color: #ffd45a;
+}
+
+.export-result-status.failed {
+  border-color: #8d443d;
+  color: #ff8a7d;
+}
+
+.export-result-summary {
+  grid-template-columns: 118px minmax(0, 1fr);
+}
+
+.export-result-path {
+  max-height: 54px;
+  overflow: auto;
+  user-select: text;
+}
+
+.export-result-errors {
+  max-height: 150px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #663f39;
+  background: #261b19;
+  color: #e9c0ba;
+  font-size: 12px;
+}
+
+.export-result-errors ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.export-result-errors small {
+  display: block;
+  margin-top: 6px;
 }
 
 .settings-dialog-layer {

@@ -5,6 +5,7 @@ function getAnnotationTitle(annotation) {
   if (!annotation) return 'Missing A Object'
   if (annotation.type === 'text') return annotation.text || 'Text'
   if (annotation.type === 'arrow') return 'Arrow'
+  if (annotation.type === 'polygon') return 'Polygon'
   return 'Rect'
 }
 
@@ -21,6 +22,7 @@ function getAnnotationSummary(annotation) {
     return `x1:${formatGeometryValue(annotation.geometry.x1)} y1:${formatGeometryValue(annotation.geometry.y1)} x2:${formatGeometryValue(annotation.geometry.x2)} y2:${formatGeometryValue(annotation.geometry.y2)}`
   }
   if (annotation.type === 'text') return annotation.text || 'FreeText'
+  if (annotation.type === 'polygon') return `${annotation.geometry?.points?.length || 0} vertices`
   return annotation.id
 }
 

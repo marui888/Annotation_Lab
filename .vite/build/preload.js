@@ -26,6 +26,7 @@ electron.contextBridge.exposeInMainWorld("labApi", {
 	openCRef: () => electron.ipcRenderer.invoke("file:openCRef"),
 	chooseExportFolder: () => electron.ipcRenderer.invoke("export:chooseFolder"),
 	exportAnnotationCrops: (payload) => electron.ipcRenderer.invoke("export:annotationCrops", payload),
+	exportCompositeItems: (payload) => electron.ipcRenderer.invoke("export:compositeItems", payload),
 	listSubjectSchemas: () => electron.ipcRenderer.invoke("schema:list"),
 	openSubjectSchema: () => electron.ipcRenderer.invoke("schema:open"),
 	readSubjectSchemaFile: (filePath) => electron.ipcRenderer.invoke("schema:readFile", filePath),

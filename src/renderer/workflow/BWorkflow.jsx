@@ -72,6 +72,7 @@ export default function BWorkflow({
   imageSize,
   canGoToAnnotation,
   onExportEntity,
+  onExportSelectedEntityItems,
   onGoToAnnotation,
   selectedAnnotationIds,
   selectedEntity,
@@ -480,6 +481,18 @@ export default function BWorkflow({
       </button>
       <button aria-label="Export Entity" data-tooltip="Export Entity" disabled={!selectedEntity || flatCards.length === 0} onClick={() => onExportEntity?.(selectedEntity)} type="button">
         <i className="fa-solid fa-file-export" />
+      </button>
+      <button
+        aria-label="Export Selected"
+        data-tooltip="Export Selected"
+        disabled={!selectedEntity || activeSelectedCardIds.length === 0}
+        onClick={() => onExportSelectedEntityItems?.(
+          selectedEntity,
+          flatCards.filter((card) => activeSelectedCardIds.includes(card.id)),
+        )}
+        type="button"
+      >
+        <i className="fa-solid fa-file-arrow-down" />
       </button>
       <button aria-label="Remove All" data-tooltip="Remove All" disabled={!selectedEntity || flatCards.length === 0} onClick={removeAllRefs} type="button">
         <i className="fa-solid fa-trash-can" />

@@ -85,6 +85,8 @@ export default function CompositeEditor({
   onAddTextItem,
   onChangeItems,
   onDeleteItem,
+  onExport,
+  onExportSelected,
   onOpenBRef,
   onOpenCRef,
   onScanAnnotationFiles,
@@ -103,6 +105,7 @@ export default function CompositeEditor({
   const builderRef = useRef(null)
   const selectedDetailRef = useRef(null)
   const sourceAreaRef = useRef(null)
+  const lastRepairRequestIdRef = useRef(repairRequestId)
   const effectiveLayoutState = useMemo(() => ({
     ...DEFAULT_COMPOSITE_LAYOUT,
     ...layoutState,
@@ -208,7 +211,8 @@ export default function CompositeEditor({
   }, [resizingBuilderControl, updateLayoutState])
 
   useEffect(() => {
-    if (!repairRequestId) return
+    if (!repairRequestId || repairRequestId === lastRepairRequestIdRef.current) return
+    lastRepairRequestIdRef.current = repairRequestId
     const timer = window.setTimeout(() => setRepairDialogOpen(true), 0)
     return () => window.clearTimeout(timer)
   }, [repairRequestId])
@@ -667,6 +671,10 @@ export default function CompositeEditor({
                 <button onClick={onAddTextItem} type="button">Add Text</button>
                 <button onClick={onAddFileRefItem} type="button">Add File</button>
                 <button onClick={onAddCRefItem} type="button">Add C Ref</button>
+              </div>
+              <div className="c-export-toolbar">
+                <button disabled={!selectedCItemId} onClick={onExportSelected} type="button">Export Selected</button>
+                <button disabled={cDocument.items.length === 0} onClick={onExport} type="button">Export</button>
               </div>
             </div>
           </div>
