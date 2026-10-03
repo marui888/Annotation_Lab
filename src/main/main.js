@@ -20,6 +20,9 @@ let quitAppAfterCloseApproval = false
 
 const DEFAULT_SETTINGS = {
   frameTimestampToleranceSeconds: 0.1,
+  videoPreviewCacheMaxMB: 128,
+  videoPreviewCacheMaxFrames: 64,
+  videoPreviewMaxConcurrentCaptures: 2,
   shortcuts: {
     video: {
       'video.playPause': 'Space',
@@ -69,12 +72,19 @@ function getSettingsFilePath() {
 
 function normalizeSettings(settings = {}) {
   const tolerance = Number(settings.frameTimestampToleranceSeconds)
+  const normalizeInteger = (value, min, max, fallback) => {
+    const number = Number(value)
+    return Number.isFinite(number) ? Math.max(min, Math.min(max, Math.round(number))) : fallback
+  }
   return {
     ...DEFAULT_SETTINGS,
     ...settings,
     frameTimestampToleranceSeconds: Number.isFinite(tolerance) && tolerance >= 0
       ? tolerance
       : DEFAULT_SETTINGS.frameTimestampToleranceSeconds,
+    videoPreviewCacheMaxMB: normalizeInteger(settings.videoPreviewCacheMaxMB, 32, 2048, DEFAULT_SETTINGS.videoPreviewCacheMaxMB),
+    videoPreviewCacheMaxFrames: normalizeInteger(settings.videoPreviewCacheMaxFrames, 8, 512, DEFAULT_SETTINGS.videoPreviewCacheMaxFrames),
+    videoPreviewMaxConcurrentCaptures: normalizeInteger(settings.videoPreviewMaxConcurrentCaptures, 1, 8, DEFAULT_SETTINGS.videoPreviewMaxConcurrentCaptures),
     shortcuts: {
       video: {
         ...DEFAULT_SETTINGS.shortcuts.video,
@@ -113,6 +123,7 @@ async function writeSettings(settings) {
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'])
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv'])
+const PDF_EXTENSIONS = new Set(['.pdf'])
 const TEXT_EXTENSIONS = new Set(['.txt', '.md'])
 
 function sanitizeFileNamePart(value, fallback = 'untitled') {
@@ -296,6 +307,21 @@ async function getVideoPayload(filePath) {
   }
 }
 
+async function getPdfPayload(filePath) {
+  const stat = await fs.stat(filePath)
+
+  return {
+    ok: true,
+    filePath,
+    fileName: path.basename(filePath),
+    folderPath: path.dirname(filePath),
+    fileUrl: toLabFileUrl(filePath),
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    pageCount: null,
+  }
+}
+
 async function loadAnnotationFile(annotationFilePath) {
   const text = await fs.readFile(annotationFilePath, 'utf8')
   const data = JSON.parse(text)
@@ -315,7 +341,9 @@ async function loadAnnotationFile(annotationFilePath) {
   const sourceExt = path.extname(sourceFilePath).toLowerCase()
   const mediaPayload = sourceKind === 'video' || VIDEO_EXTENSIONS.has(sourceExt)
     ? await getVideoPayload(sourceFilePath)
-    : await getImagePayload(sourceFilePath)
+    : sourceKind === 'pdf' || sourceExt === '.pdf'
+      ? await getPdfPayload(sourceFilePath)
+      : await getImagePayload(sourceFilePath)
 
   return {
     ok: true,
@@ -636,6 +664,25 @@ app.whenReady().then(() => {
     return getVideoPayload(result.filePaths[0])
   })
 
+  ipcMain.handle('file:openPdf', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Open PDF',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'PDF documents',
+          extensions: ['pdf'],
+        },
+      ],
+    })
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true }
+    }
+
+    return getPdfPayload(result.filePaths[0])
+  })
+
   ipcMain.handle('annotation:openFile', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Open Annotation JSON',
@@ -837,13 +884,15 @@ app.whenReady().then(() => {
       const exported = []
 
       const getImageInput = (task) => {
-        if (sourceKind !== 'video') return { key: 'source-image', input: sourceFilePath }
+        if (sourceKind !== 'video' && sourceKind !== 'pdf') {
+          return { key: 'source-image', input: sourceFilePath }
+        }
         const frameId = task.sourceFrameId
         const dataUrl = frameImageDataUrls.get(frameId)
-        if (!frameId || !dataUrl) throw new Error(`missing-video-frame-image:${frameId || 'unknown'}`)
+        if (!frameId || !dataUrl) throw new Error(`missing-media-frame-image:${frameId || 'unknown'}`)
         if (!imageInputCache.has(frameId)) {
           const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/.exec(dataUrl)
-          if (!match) throw new Error(`invalid-video-frame-image:${frameId}`)
+          if (!match) throw new Error(`invalid-media-frame-image:${frameId}`)
           imageInputCache.set(frameId, Buffer.from(match[1], 'base64'))
         }
         return { key: frameId, input: imageInputCache.get(frameId) }
@@ -944,6 +993,22 @@ app.whenReady().then(() => {
       return {
         ok: false,
         folderPath: targetFolder,
+        reason: error.message || String(error),
+      }
+    }
+  })
+
+  ipcMain.handle('file:loadPdfByPath', async (_event, filePath) => {
+    if (!filePath) return { ok: false, reason: 'file-path-empty' }
+    if (!PDF_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+      return { ok: false, reason: 'unsupported-pdf-file' }
+    }
+
+    try {
+      return await getPdfPayload(filePath)
+    } catch (error) {
+      return {
+        ok: false,
         reason: error.message || String(error),
       }
     }

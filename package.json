@@ -15,9 +15,11 @@
     "@fortawesome/fontawesome-free": "^7.3.1",
     "konva": "^10.0.12",
     "lucide-react": "^0.546.0",
+    "pdfjs-dist": "5.4.296",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-konva": "^19.0.10",
+    "react-pdf": "10.4.1",
     "sharp": "^0.35.3",
     "video.js": "^8.23.9",
     "zustand": "^5.0.8"

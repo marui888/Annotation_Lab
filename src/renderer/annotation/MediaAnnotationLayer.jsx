@@ -107,6 +107,7 @@ function isOrthogonalSegment(start, end) {
 export default function MediaAnnotationLayer({
   annotations,
   frameId,
+  keyboardShortcutsEnabled = true,
   mode,
   onAddAnnotation,
   onAddTextAnnotation,
@@ -115,6 +116,7 @@ export default function MediaAnnotationLayer({
   onCanvasContextMenu,
   onCanvasDoubleClick,
   onEditTextAnnotation,
+  onInteractionLockChange,
   onSelectAnnotation,
   onToolModeChange,
   onUpdateAnnotation,
@@ -136,6 +138,14 @@ export default function MediaAnnotationLayer({
   const suppressPolygonClickRef = useRef(false)
 
   const canUseStage = frameId && size?.width > 0 && size?.height > 0
+  const hasBlockingInteraction = draftPolygonPoints.length > 0 || Boolean(polygonRepair)
+
+  useEffect(() => {
+    onInteractionLockChange?.(frameId, hasBlockingInteraction)
+    return () => {
+      if (hasBlockingInteraction) onInteractionLockChange?.(frameId, false)
+    }
+  }, [frameId, hasBlockingInteraction, onInteractionLockChange])
 
   const getPointerPosition = (event) => {
     const stage = event.target.getStage()
@@ -335,7 +345,7 @@ export default function MediaAnnotationLayer({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (!selectedPolygonEdges || pendingPolygonEdgeDelete || polygonRepair) return undefined
+    if (!keyboardShortcutsEnabled || !selectedPolygonEdges || pendingPolygonEdgeDelete || polygonRepair) return undefined
 
     const handleDeleteSelectedEdges = (event) => {
       const target = event.target
@@ -353,7 +363,7 @@ export default function MediaAnnotationLayer({
 
     window.addEventListener('keydown', handleDeleteSelectedEdges, true)
     return () => window.removeEventListener('keydown', handleDeleteSelectedEdges, true)
-  }, [pendingPolygonEdgeDelete, polygonRepair, selectedPolygonEdges])
+  }, [keyboardShortcutsEnabled, pendingPolygonEdgeDelete, polygonRepair, selectedPolygonEdges])
 
   useEffect(() => {
     if (!selectedPolygonEdges) return undefined
@@ -420,7 +430,7 @@ export default function MediaAnnotationLayer({
   }
 
   useEffect(() => {
-    if (mode !== 'polygon') return undefined
+    if (!keyboardShortcutsEnabled || mode !== 'polygon') return undefined
 
     const handlePolygonKeyDown = (event) => {
       const targetTag = event.target?.tagName?.toLowerCase()
@@ -456,10 +466,10 @@ export default function MediaAnnotationLayer({
 
     window.addEventListener('keydown', handlePolygonKeyDown)
     return () => window.removeEventListener('keydown', handlePolygonKeyDown)
-  }, [completePolygon, draftPolygonPoints, mode, onToolModeChange])
+  }, [completePolygon, draftPolygonPoints, keyboardShortcutsEnabled, mode, onToolModeChange])
 
   useEffect(() => {
-    if (!polygonRepair && !selectedPolygonEdges) return undefined
+    if (!keyboardShortcutsEnabled || (!polygonRepair && !selectedPolygonEdges)) return undefined
 
     const handlePolygonEditKeyDown = (event) => {
       const target = event.target
@@ -503,7 +513,7 @@ export default function MediaAnnotationLayer({
 
     window.addEventListener('keydown', handlePolygonEditKeyDown, true)
     return () => window.removeEventListener('keydown', handlePolygonEditKeyDown, true)
-  }, [polygonRepair, selectedPolygonEdges])
+  }, [keyboardShortcutsEnabled, polygonRepair, selectedPolygonEdges])
 
   const handleMouseDown = (event) => {
     if (event.evt?.button === 2) return

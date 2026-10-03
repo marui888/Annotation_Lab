@@ -3,7 +3,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('labApi', {
   openImage: () => ipcRenderer.invoke('file:openImage'),
   openVideo: () => ipcRenderer.invoke('file:openVideo'),
+  openPdf: () => ipcRenderer.invoke('file:openPdf'),
   loadImageByPath: (filePath) => ipcRenderer.invoke('file:loadImageByPath', filePath),
+  loadPdfByPath: (filePath) => ipcRenderer.invoke('file:loadPdfByPath', filePath),
   openAnnotationFile: () => ipcRenderer.invoke('annotation:openFile'),
   importSimpleNotes: () => ipcRenderer.invoke('annotation:importSimpleNotes'),
   readAnnotationFileRaw: (annotationFilePath) => ipcRenderer.invoke('annotation:readRawByPath', annotationFilePath),

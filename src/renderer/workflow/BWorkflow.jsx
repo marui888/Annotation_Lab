@@ -17,6 +17,7 @@ import {
   updateAllACardRoles,
 } from '../domain/aCardTree'
 import PreviewControlOverlay from '../components/preview/PreviewControlOverlay'
+import usePreviewWheelZoom from '../components/preview/usePreviewWheelZoom'
 import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
 import {
   DOMAIN_SCHEMAS,
@@ -101,6 +102,11 @@ export default function BWorkflow({
   const [showPreviewAnnotationFrame, setShowPreviewAnnotationFrame] = useState(true)
   const [isResizingBottom, setIsResizingBottom] = useState(false)
   const [entityMetaTab, setEntityMetaTab] = useState('structure')
+  const previewScrollRef = usePreviewWheelZoom({
+    enabled: viewTab === 'preview',
+    scale: previewScaleFactor,
+    setScale: setPreviewScaleFactor,
+  })
 
   const entityTree = selectedEntity ? getEntityACardTree(selectedEntity) : []
   const flatCards = flattenACardTree(entityTree)
@@ -575,7 +581,7 @@ export default function BWorkflow({
                 scale={previewScaleFactor}
                 showFrame={showPreviewAnnotationFrame}
               />
-              <div className="b-preview-list">
+              <div className="b-preview-list" ref={previewScrollRef}>
                 <EntityRawPreview
                   annotations={annotations}
                   ensureAnnotationPreview={ensureAnnotationPreview}

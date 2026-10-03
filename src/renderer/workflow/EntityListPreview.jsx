@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import PreviewControlOverlay from '../components/preview/PreviewControlOverlay'
+import usePreviewWheelZoom from '../components/preview/usePreviewWheelZoom'
 import { DOMAIN_SCHEMAS, validateDomainEntity } from '../domain/domainSchemas'
 import EntityListView from './EntityListView'
 import EntityRawPreview from './EntityRawPreview'
@@ -19,17 +21,29 @@ export default function EntityListPreview({
   onActiveViewChange,
   onNodeContextMenu,
   onSelectCards,
-  previewBackgroundColor = '#ffffff',
+  previewBackgroundColor: initialPreviewBackgroundColor = '#ffffff',
   readOnly = true,
   selectedCardIds = [],
   subjectSchemas = DOMAIN_SCHEMAS,
 }) {
   const [internalViewTab, setInternalViewTab] = useState('list')
+  const [previewBackgroundColor, setPreviewBackgroundColor] = useState(initialPreviewBackgroundColor)
+  const [previewScaleFactor, setPreviewScaleFactor] = useState(1)
+  const [showAnnotationFrame, setShowAnnotationFrame] = useState(true)
   const viewTab = activeView || internalViewTab
+  const previewScrollRef = usePreviewWheelZoom({
+    enabled: viewTab === 'preview',
+    scale: previewScaleFactor,
+    setScale: setPreviewScaleFactor,
+  })
   const validation = entity ? validateDomainEntity(entity, subjectSchemas) : null
   const setViewTab = (nextViewTab) => {
     if (!activeView) setInternalViewTab(nextViewTab)
     onActiveViewChange?.(nextViewTab)
+  }
+
+  const changePreviewScale = (delta) => {
+    setPreviewScaleFactor((current) => Math.max(0.5, Math.min(3, Number((current + delta).toFixed(2)))))
   }
 
   if (!entity) {
@@ -57,13 +71,11 @@ export default function EntityListPreview({
         ))}
       </div>
 
-      <div
-        className="entity-list-preview-paper"
-        style={{
-          '--entity-list-preview-background': previewBackgroundColor,
-        }}
-      >
-        {viewTab === 'list' ? (
+      {viewTab === 'list' ? (
+        <div
+          className="entity-list-preview-paper"
+          style={{ '--entity-list-preview-background': initialPreviewBackgroundColor }}
+        >
           <EntityListView
             annotations={annotations}
             entity={entity}
@@ -72,20 +84,40 @@ export default function EntityListPreview({
             selectedCardIds={selectedCardIds}
             subjectSchemas={subjectSchemas}
           />
-        ) : (
-          <EntityRawPreview
-            annotations={annotations}
-            entity={entity}
-            getAnnotationPreview={getAnnotationPreview}
-            imageSize={imageSize}
-            imageUrl={imageUrl}
-            onNodeContextMenu={onNodeContextMenu}
-            onSelectCards={onSelectCards}
-            readOnly={readOnly}
-            selectedCardIds={selectedCardIds}
+        </div>
+      ) : (
+        <div
+          className="entity-list-preview-shell"
+          style={{ '--entity-list-preview-background': previewBackgroundColor }}
+        >
+          <PreviewControlOverlay
+            backgroundColor={previewBackgroundColor}
+            onBackgroundColorChange={setPreviewBackgroundColor}
+            onScaleChange={changePreviewScale}
+            onScaleReset={() => setPreviewScaleFactor(1)}
+            onShowFrameChange={setShowAnnotationFrame}
+            scale={previewScaleFactor}
+            showFrame={showAnnotationFrame}
           />
-        )}
-      </div>
+          <div className="entity-list-preview-paper preview-mode" ref={previewScrollRef}>
+            <EntityRawPreview
+              annotations={annotations}
+              entity={entity}
+              getAnnotationPreview={getAnnotationPreview}
+              imageSize={imageSize}
+              imageUrl={imageUrl}
+              onNodeContextMenu={onNodeContextMenu}
+              onSelectCards={onSelectCards}
+              previewBackgroundColor={previewBackgroundColor}
+              previewScaleFactor={previewScaleFactor}
+              readOnly={readOnly}
+              selectedCardIds={selectedCardIds}
+              showAnnotationFrame={showAnnotationFrame}
+              useSharedScale
+            />
+          </div>
+        </div>
+      )}
     </section>
   )
 }

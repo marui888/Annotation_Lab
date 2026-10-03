@@ -1,4 +1,10 @@
 import { createImageFrame, createImageSource } from '../media/imageAdapter'
+import {
+  createPdfPageFrame,
+  createPdfSource,
+  getPdfFramePage,
+  hydratePdfSource,
+} from '../media/pdfAdapter'
 import { createVideoSource } from '../media/videoAdapter'
 
 export function createImageEditorInput(imageResult, options = {}) {
@@ -31,6 +37,16 @@ export function createVideoEditorInput(videoResult, options = {}) {
   }
 }
 
+export function createPdfEditorInput(pdfResult, options = {}) {
+  return {
+    kind: 'pdf',
+    sourcePath: pdfResult?.filePath || '',
+    annotationPath: options.annotationPath || '',
+    entityId: options.entityId || '',
+    fileInfo: pdfResult || null,
+  }
+}
+
 function toFileUrl(filePath = '') {
   const normalized = String(filePath || '').replace(/\\/g, '/')
   const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`
@@ -45,12 +61,20 @@ export async function openVideoFile() {
   return window.labApi?.openVideo?.()
 }
 
+export async function openPdfFile() {
+  return window.labApi?.openPdf?.()
+}
+
 export async function openAnnotationFile() {
   return window.labApi?.openAnnotationFile?.()
 }
 
 export async function loadImageFileByPath(filePath) {
   return window.labApi?.loadImageByPath?.(filePath)
+}
+
+export async function loadPdfFileByPath(filePath) {
+  return window.labApi?.loadPdfByPath?.(filePath)
 }
 
 export async function loadAnnotationFileByPath(annotationFilePath) {
@@ -105,9 +129,56 @@ export async function loadEditorSessionFromInput(input) {
     })
   }
 
+  if (input.kind === 'pdf') {
+    const pdfResult = input.fileInfo?.ok
+      ? input.fileInfo
+      : await loadPdfFileByPath(input.sourcePath)
+    return loadPdfEditorSessionFromResult(pdfResult, {
+      entityId: input.entityId,
+    })
+  }
+
   return {
     ok: false,
     reason: `unsupported-input-kind-${input.kind}`,
+  }
+}
+
+export async function loadPdfEditorSessionFromResult(pdfResult, options = {}) {
+  if (!pdfResult?.ok) {
+    return {
+      ok: false,
+      reason: pdfResult?.reason || 'invalid-pdf-result',
+      canceled: pdfResult?.canceled || false,
+    }
+  }
+
+  const source = createPdfSource(pdfResult)
+  const annotationResult = await loadAnnotationForSource(source.filePath)
+  if (annotationResult?.ok && annotationResult.data) {
+    return loadPdfEditorSessionFromAnnotationResult({
+      ...annotationResult,
+      media: pdfResult,
+    }, options)
+  }
+  const frame = createPdfPageFrame(source, { physicalPage: 1 })
+  const annotationFilePath = annotationResult?.annotationFilePath || `${source.filePath}.annotation.json`
+
+  return {
+    ok: true,
+    input: createPdfEditorInput(pdfResult, {
+      entityId: options.entityId,
+    }),
+    source,
+    frame,
+    frames: [frame],
+    annotationFilePath,
+    annotations: [],
+    simpleNotes: [],
+    entities: [],
+    folderPath: '',
+    folderImages: [],
+    saveStatus: annotationResult?.missing ? 'No annotation file' : 'Not saved',
   }
 }
 
@@ -132,6 +203,9 @@ export async function loadImageEditorSessionFromAnnotationResult(annotationResul
   if (sourceKind === 'video') {
     return loadVideoEditorSessionFromAnnotationResult(annotationResult, options)
   }
+  if (sourceKind === 'pdf') {
+    return loadPdfEditorSessionFromAnnotationResult(annotationResult, options)
+  }
 
   const source = createImageSource(mediaResult)
   const frame = createImageFrame(source)
@@ -154,6 +228,65 @@ export async function loadImageEditorSessionFromAnnotationResult(annotationResul
     folderPath: mediaResult.folderPath || '',
     folderImages: Array.isArray(mediaResult.folderImages) ? mediaResult.folderImages : [],
     saveStatus: 'Loaded',
+  }
+}
+
+export async function loadPdfEditorSessionFromAnnotationResult(annotationResult, options = {}) {
+  if (!annotationResult?.ok) {
+    return {
+      ok: false,
+      reason: annotationResult?.reason || 'invalid-annotation-result',
+      canceled: annotationResult?.canceled || false,
+    }
+  }
+
+  const pdfResult = annotationResult.media || annotationResult.image
+  if (!pdfResult?.ok) {
+    return { ok: false, reason: pdfResult?.reason || 'source-pdf-load-failed' }
+  }
+
+  const data = annotationResult.data || {}
+  const savedSource = data.sources?.[0] || {}
+  const savedFingerprint = savedSource.fingerprint || {}
+  const fingerprintChanged = (
+    savedFingerprint.size != null
+    && pdfResult.size != null
+    && Number(savedFingerprint.size) !== Number(pdfResult.size)
+  ) || (
+    savedFingerprint.mtimeMs != null
+    && pdfResult.mtimeMs != null
+    && Number(savedFingerprint.mtimeMs) !== Number(pdfResult.mtimeMs)
+  )
+  const source = hydratePdfSource(savedSource, pdfResult)
+  const frames = (Array.isArray(data.frames) ? data.frames : [])
+    .map((savedFrame) => createPdfPageFrame(source, {
+      ...savedFrame.meta,
+      ...savedFrame,
+      physicalPage: getPdfFramePage(savedFrame),
+    }))
+    .filter((savedFrame) => getPdfFramePage(savedFrame))
+  const firstFrame = frames[0] || createPdfPageFrame(source, { physicalPage: 1 })
+  const annotationFilePath = annotationResult.annotationFilePath || `${source.filePath}.annotation.json`
+
+  return {
+    ok: true,
+    input: createAnnotationEditorInput(annotationFilePath, {
+      sourcePath: source.filePath,
+      entityId: options.entityId,
+    }),
+    source,
+    frame: firstFrame,
+    frames: frames.length ? frames : [firstFrame],
+    annotationFilePath,
+    annotations: Array.isArray(data.annotations) ? data.annotations : [],
+    simpleNotes: Array.isArray(data.simpleNotes) ? data.simpleNotes : [],
+    entities: Array.isArray(data.entities) ? data.entities : [],
+    folderPath: '',
+    folderImages: [],
+    saveStatus: 'Loaded',
+    warning: fingerprintChanged
+      ? 'The PDF file has changed since this annotation note was saved. Page references were kept unchanged.'
+      : '',
   }
 }
 

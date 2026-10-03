@@ -2,6 +2,8 @@ import { createAnnotationExportTask } from '../ab-editor/exportCropRect'
 import { getEntityAObjectRefs } from '../domain/domainSchemas'
 import { normalizeCDocument } from '../domain/cDocument'
 import { captureVideoFrameSnapshot } from '../media/videoFrameSnapshot'
+import { capturePdfPageSnapshot } from '../media/pdfPageSnapshot'
+import { getPdfFramePage } from '../media/pdfAdapter'
 import {
   getAnnotationSourceKind,
   resolveAnnotationFrameTime,
@@ -170,6 +172,35 @@ export async function prepareCompositeExport({
             kind: 'error',
             annotationType: annotation.type,
             reason: snapshot?.reason || 'video-frame-snapshot-failed',
+          })
+          continue
+        }
+        exportImageSize = snapshot.imageSize
+        imageDataUrl = snapshot.previewUrl
+      } else if (sourceKind === 'pdf' && annotation.type !== 'text') {
+        const annotationFrame = (annotationData.frames || [])
+          .find((candidate) => candidate.id === annotation.frameId)
+        const page = getPdfFramePage(annotationFrame)
+        if (!page) {
+          appendTask({ ...common, kind: 'error', annotationType: annotation.type, reason: 'pdf-page-unavailable' })
+          continue
+        }
+        sourceFrameId = annotation.frameId || `page-${page}`
+        const frameCacheKey = `${sourceFilePath}:${sourceFrameId}:page:${page}`
+        if (!videoFrameCache.has(frameCacheKey)) {
+          videoFrameCache.set(frameCacheKey, capturePdfPageSnapshot({
+            src: loadResult.media?.fileUrl,
+            page,
+            renderScale: 2,
+          }))
+        }
+        const snapshot = await videoFrameCache.get(frameCacheKey)
+        if (!snapshot?.ok) {
+          appendTask({
+            ...common,
+            kind: 'error',
+            annotationType: annotation.type,
+            reason: snapshot?.reason || 'pdf-page-snapshot-failed',
           })
           continue
         }

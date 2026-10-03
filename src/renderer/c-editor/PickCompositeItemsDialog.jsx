@@ -15,7 +15,9 @@ export default function PickCompositeItemsDialog({
   onAddSelected,
   onClose,
   onOpenWhole,
+  previewResources,
   sourceDocument,
+  workspaceId,
 }) {
   const cDocument = useMemo(() => normalizeCDocument(sourceDocument), [sourceDocument])
   const flatItems = useMemo(() => flattenTree(cDocument.items || []), [cDocument.items])
@@ -126,8 +128,10 @@ export default function PickCompositeItemsDialog({
               <CSelectedDetailPanel
                 onOpenBRef={() => {}}
                 onUpdateItemText={() => {}}
+                previewResources={previewResources}
                 selectedBIndexItem={null}
                 selectedCItem={selectedItem}
+                workspaceId={workspaceId}
               />
             </div>
           </aside>
@@ -147,8 +151,10 @@ export default function PickCompositeItemsDialog({
               onOpenBRef={() => {}}
               onSelectItem={selectItem}
               panel="document"
+              previewResources={previewResources}
               selectedCItemId={selectedCItemId}
               showFilter
+              workspaceId={workspaceId}
             />
           </section>
         </div>

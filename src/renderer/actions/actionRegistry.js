@@ -8,6 +8,7 @@ export const ACTION_CATALOG = [
   { id: 'global.undoDelete', label: 'Undo Delete', scope: 'global', description: 'Undo the latest supported delete in the active editor session.' },
   { id: 'global.openSettings', label: 'Open Settings', scope: 'global', description: 'Open application settings.' },
   { id: 'global.openSchemaEditor', label: 'Open Schema Editor', scope: 'global', description: 'Open Subject Schema Editor.' },
+  { id: 'pdf.openPdf', label: 'Open PDF', scope: 'pdf', description: 'Open a PDF source.' },
   { id: 'picture.openImage', label: 'Open Image', scope: 'picture', description: 'Open an image source.' },
   { id: 'picture.openAnnotation', label: 'Open JSON', scope: 'picture', description: 'Open an annotation JSON file.' },
   { id: 'picture.saveJson', label: 'Save JSON', scope: 'picture', description: 'Save current annotation JSON.' },

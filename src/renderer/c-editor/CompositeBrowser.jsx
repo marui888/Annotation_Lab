@@ -11,8 +11,10 @@ export default function CompositeBrowser({
   onSelectItem,
   onUpdateItemText,
   panel = 'both',
+  previewResources,
   selectedCItemId = null,
   showFilter = true,
+  workspaceId = '',
 }) {
   const selectedTreeItem = (cDocument.items || []).flatMap(function flatten(item) {
     return [item, ...(item.children || []).flatMap(flatten)]
@@ -23,7 +25,9 @@ export default function CompositeBrowser({
         onOpenBRef={onOpenBRef}
         onOpenCRef={onOpenCRef}
         onUpdateItemText={onUpdateItemText}
+        previewResources={previewResources}
         selectedCItem={selectedTreeItem}
+        workspaceId={workspaceId}
       />
     )
   }
@@ -39,8 +43,10 @@ export default function CompositeBrowser({
         onOpenCRef={onOpenCRef}
         onSelectItem={onSelectItem}
         onUpdateItemText={onUpdateItemText}
+        previewResources={previewResources}
         selectedCItemId={selectedCItemId}
         showFilter={showFilter}
+        workspaceId={workspaceId}
       />
     )
   }
@@ -55,7 +61,9 @@ export default function CompositeBrowser({
           onOpenCRef={onOpenCRef}
           onUpdateItemText={onUpdateItemText}
           panel="detail"
+          previewResources={previewResources}
           selectedCItemId={selectedCItemId}
+          workspaceId={workspaceId}
         />
       </aside>
       <section className="composite-browser-document">
@@ -69,8 +77,10 @@ export default function CompositeBrowser({
           onSelectItem={onSelectItem}
           onUpdateItemText={onUpdateItemText}
           panel="document"
+          previewResources={previewResources}
           selectedCItemId={selectedCItemId}
           showFilter={showFilter}
+          workspaceId={workspaceId}
         />
       </section>
     </div>

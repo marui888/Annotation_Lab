@@ -76,8 +76,10 @@ export default function CompositeDocumentView({
   onOpenBRef,
   onSelectItem,
   onUpdateItemText,
+  previewResources,
   selectedCItemId,
   showFilter = true,
+  workspaceId,
 }) {
   const [filter, setFilter] = useState({ type: 'all', query: '' })
   const filterActive = filter.type !== 'all' || Boolean(filter.query.trim())
@@ -126,7 +128,9 @@ export default function CompositeDocumentView({
         onOpenBRef={onOpenBRef}
         onSelectItem={onSelectItem}
         onUpdateItemText={onUpdateItemText}
+        previewResources={previewResources}
         selectedCItemId={selectedCItemId}
+        workspaceId={workspaceId}
       />
     </div>
   )

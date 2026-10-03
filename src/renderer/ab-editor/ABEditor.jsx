@@ -9,6 +9,7 @@ import {
 } from '../core/geometryTransform'
 import { createVideoFrame } from '../media/videoAdapter'
 import VideoPlayer from '../video/VideoPlayer'
+import PdfViewer from '../pdf/PdfViewer'
 import { runAction } from '../actions/actionRegistry'
 import APreviewCard from './APreviewCard'
 import { loadEditorSessionFromInput } from './abEditorLoader'
@@ -430,6 +431,7 @@ export default function ABEditor({
   inspectorContent,
   formatEntityLabel = (entity) => entity.label || entity.id,
   frame,
+  frames = [],
   framePreviewUrl,
   getAnnotationPreview,
   imageSize,
@@ -452,6 +454,14 @@ export default function ABEditor({
   canGoToAnnotation,
   onGoToAnnotation,
   onImageSizeChange,
+  onPdfDocumentInfo,
+  onPdfPageChange,
+  onPdfPageInfo,
+  onPdfPageSnapshot,
+  onPdfViewModeChange,
+  onFitZoom,
+  onActualSizeZoom,
+  onZoomChange,
   onLayoutStateChange,
   onMediaBottomTabChange,
   onSessionLoadError,
@@ -468,6 +478,9 @@ export default function ABEditor({
   onUseVideoFrame,
   onVideoPlaybackInfo,
   playPauseRequestId,
+  pdfPage = 1,
+  pdfNavigationRequest = null,
+  pdfViewMode = 'single',
   previewAnnotationId,
   saveStatus,
   selectedAnnotationIds,
@@ -500,6 +513,14 @@ export default function ABEditor({
   const [resizingWorkspacePart, setResizingWorkspacePart] = useState(null)
   const [isResizingAPreview, setIsResizingAPreview] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
+  const [pdfInteractionLockedFrameId, setPdfInteractionLockedFrameId] = useState(null)
+
+  const updatePdfInteractionLock = useCallback((targetFrameId, locked) => {
+    setPdfInteractionLockedFrameId((current) => {
+      if (locked) return targetFrameId
+      return current === targetFrameId ? null : current
+    })
+  }, [])
 
   const updateLayoutState = useCallback((patch) => {
     onLayoutStateChange?.({
@@ -627,6 +648,7 @@ export default function ABEditor({
 
   const isVideoSource = source?.kind === 'video'
   const isImageSource = source?.kind === 'image'
+  const isPdfSource = source?.kind === 'pdf'
 
   const fitImageDisplayStyle = useMemo(() => {
     if (!imageSize || !viewSize?.width || !viewSize?.height) return undefined
@@ -679,7 +701,7 @@ export default function ABEditor({
   const previewAnnotationPreview = previewAnnotation
     ? getAnnotationPreview?.(previewAnnotation)
     : null
-  const shouldShowAPreview = isImageSource || isVideoSource
+  const shouldShowAPreview = isImageSource || isVideoSource || isPdfSource
 
   const formatTime = (seconds) => {
     if (!Number.isFinite(seconds)) return '--'
@@ -695,6 +717,12 @@ export default function ABEditor({
     if (!annotation) return '--'
     if (frame?.id !== annotation.frameId) return annotation.frameId || '--'
     if (frame.kind === 'video-frame') return formatTime(frame.locator?.time)
+    if (frame.kind === 'pdf-page') {
+      const page = frame.locator?.physicalPage ?? frame.locator?.page
+      return frame.meta?.bookPageLabel
+        ? `PDF ${page} · Book ${frame.meta.bookPageLabel}`
+        : `PDF page ${page || '--'}`
+    }
     return 'image'
   }
 
@@ -720,10 +748,10 @@ export default function ABEditor({
             annotation={previewAnnotation}
             imageUrl={previewAnnotationPreview?.imageUrl}
             imageSize={previewAnnotationPreview?.imageSize}
-            missingPreviewText={isVideoSource
+            missingPreviewText={isVideoSource || isPdfSource
               ? previewAnnotationPreview?.reason
-                ? `Frame preview failed: ${previewAnnotationPreview.reason}`
-                : 'Building frame preview...'
+                ? `Source preview failed: ${previewAnnotationPreview.reason}`
+                : 'Building source preview...'
               : 'Preview unavailable.'}
             showInfo={false}
           />
@@ -832,11 +860,11 @@ export default function ABEditor({
     event.dataTransfer.setData('text/plain', ids[0])
   }
 
-  const getAnnotationDragChipStyle = (annotation) => {
-    if (!imageDisplaySize) return null
+  const getAnnotationDragChipStyle = (annotation, targetSize = imageDisplaySize) => {
+    if (!targetSize) return null
 
     if (annotation.type === 'rect' || annotation.type === 'text') {
-      const rect = denormalizeRect(annotation.geometry, imageDisplaySize)
+      const rect = denormalizeRect(annotation.geometry, targetSize)
       return {
         left: Math.max(2, rect.x + 4),
         top: Math.max(2, rect.y + 4),
@@ -844,7 +872,7 @@ export default function ABEditor({
     }
 
     if (annotation.type === 'arrow') {
-      const arrow = denormalizeArrow(annotation.geometry, imageDisplaySize)
+      const arrow = denormalizeArrow(annotation.geometry, targetSize)
       return {
         left: Math.max(2, Math.min(arrow.x1, arrow.x2) + 4),
         top: Math.max(2, Math.min(arrow.y1, arrow.y2) + 4),
@@ -853,7 +881,7 @@ export default function ABEditor({
 
 
     if (annotation.type === 'polygon') {
-      const bounds = getPolygonBounds(denormalizePolygon(annotation.geometry, imageDisplaySize))
+      const bounds = getPolygonBounds(denormalizePolygon(annotation.geometry, targetSize))
       return bounds ? {
         left: Math.max(2, bounds.x + 4),
         top: Math.max(2, bounds.y + 4),
@@ -870,6 +898,202 @@ export default function ABEditor({
       height: image.naturalHeight,
     })
   }
+
+  const renderPdfAnnotationOverlay = ({ width, height, displayScale: pdfDisplayScale }) => {
+    if (pdfViewMode !== 'single' || !frame?.id) return null
+    const pdfDisplaySize = { width, height }
+    const visibleAnnotations = annotations.filter((annotation) => annotation.frameId === frame.id)
+    const visibleSelection = selectedAnnotationIds.filter((annotationId) => (
+      visibleAnnotations.some((annotation) => annotation.id === annotationId)
+    ))
+    const pdfEditingText = editingTextAnnotation?.frameId === frame.id ? editingTextAnnotation : null
+    const pdfEditingTextBox = pdfEditingText
+      ? denormalizeRect(pdfEditingText.geometry, pdfDisplaySize)
+      : null
+    return (
+      <div className="annotation-layer-host" style={{ width, height }}>
+        <MediaAnnotationLayer
+          annotations={visibleAnnotations}
+          frameId={frame.id}
+          key={`pdf-annotation-layer-${frame.id}-${toolMode}`}
+          mode={toolMode}
+          onAddAnnotation={onAddAnnotation}
+          onAddTextAnnotation={onAddTextAnnotation}
+          onAObjectContextMenu={openAObjectContextMenu}
+          onCanvasContextMenu={(x, y) => setContextMenu({ type: 'canvas', x, y })}
+          onCanvasDoubleClick={() => onToolModeChange('select')}
+          onClearSelection={onClearSelection}
+          onEditTextAnnotation={onEditTextAnnotation}
+          onInteractionLockChange={updatePdfInteractionLock}
+          onSelectAnnotation={onSelectAnnotation}
+          onToolModeChange={onToolModeChange}
+          onUpdateAnnotation={onUpdateAnnotation}
+          selectedAnnotationIds={visibleSelection}
+          size={pdfDisplaySize}
+          displayScale={pdfDisplayScale}
+        />
+        {pdfEditingText && pdfEditingTextBox ? (
+          <textarea
+            autoFocus
+            className="inline-freetext-editor"
+            onBlur={commitTextEdit}
+            onChange={(event) => updateTextDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelTextEdit()
+              }
+              if (event.key === 'Enter' && event.ctrlKey) {
+                event.preventDefault()
+                commitTextEdit()
+              }
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{
+              left: pdfEditingTextBox.x,
+              top: pdfEditingTextBox.y,
+              width: pdfEditingTextBox.width,
+              height: pdfEditingTextBox.height,
+              color: pdfEditingText.style?.fill || '#ff4d4d',
+              fontSize: `${(pdfEditingText.style?.fontSize || 18) * pdfDisplayScale}px`,
+              padding: `${6 * pdfDisplayScale}px`,
+            }}
+            value={textDraft}
+          />
+        ) : null}
+        {visibleSelection.map((annotationId) => {
+          const annotation = getAnnotationById(annotationId)
+          const chipStyle = annotation ? getAnnotationDragChipStyle(annotation, pdfDisplaySize) : null
+          if (!annotation || !chipStyle) return null
+          return (
+            <button
+              className="a-object-drag-chip"
+              draggable
+              key={annotation.id}
+              onClick={(event) => event.stopPropagation()}
+              onDragStart={(event) => startAObjectDrag(event, visibleSelection)}
+              style={chipStyle}
+              title="Drag selected A object to B Workflow"
+              type="button"
+            >
+              A
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const renderPdfContinuousOverlay = ({ page, width, height, displayScale: pdfDisplayScale }) => {
+    const pageFrame = frames.find((item) => (
+      (item.locator?.physicalPage ?? item.locator?.page) === page
+    ))
+    if (!pageFrame) return null
+    const isLockedOut = Boolean(
+      pdfInteractionLockedFrameId && pdfInteractionLockedFrameId !== pageFrame.id
+    )
+    const visibleAnnotations = annotations.filter((annotation) => annotation.frameId === pageFrame.id)
+    const visibleSelection = selectedAnnotationIds.filter((annotationId) => (
+      visibleAnnotations.some((annotation) => annotation.id === annotationId)
+    ))
+    const pdfEditingText = editingTextAnnotation?.frameId === pageFrame.id ? editingTextAnnotation : null
+    const pdfEditingTextBox = pdfEditingText
+      ? denormalizeRect(pdfEditingText.geometry, { width, height })
+      : null
+    return (
+      <div
+        className={`annotation-layer-host${isLockedOut ? ' pdf-interaction-locked-out' : ''}`}
+        onMouseDownCapture={(event) => {
+          if (isLockedOut) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (page !== pdfPage) onPdfPageChange?.(page)
+        }}
+        style={{ width, height }}
+      >
+        <MediaAnnotationLayer
+          annotations={visibleAnnotations}
+          frameId={pageFrame.id}
+          keyboardShortcutsEnabled={page === pdfPage || pdfInteractionLockedFrameId === pageFrame.id}
+          key={`pdf-continuous-annotation-layer-${pageFrame.id}-${toolMode}`}
+          mode={toolMode}
+          onAddAnnotation={onAddAnnotation}
+          onAddTextAnnotation={onAddTextAnnotation}
+          onAObjectContextMenu={openAObjectContextMenu}
+          onCanvasContextMenu={(x, y) => setContextMenu({ type: 'canvas', x, y })}
+          onCanvasDoubleClick={() => onToolModeChange('select')}
+          onClearSelection={onClearSelection}
+          onEditTextAnnotation={onEditTextAnnotation}
+          onInteractionLockChange={updatePdfInteractionLock}
+          onSelectAnnotation={onSelectAnnotation}
+          onToolModeChange={onToolModeChange}
+          onUpdateAnnotation={onUpdateAnnotation}
+          selectedAnnotationIds={visibleSelection}
+          size={{ width, height }}
+          displayScale={pdfDisplayScale}
+        />
+        {pdfEditingText && pdfEditingTextBox ? (
+          <textarea
+            autoFocus
+            className="inline-freetext-editor"
+            onBlur={commitTextEdit}
+            onChange={(event) => updateTextDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelTextEdit()
+              }
+              if (event.key === 'Enter' && event.ctrlKey) {
+                event.preventDefault()
+                commitTextEdit()
+              }
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{
+              left: pdfEditingTextBox.x,
+              top: pdfEditingTextBox.y,
+              width: pdfEditingTextBox.width,
+              height: pdfEditingTextBox.height,
+              color: pdfEditingText.style?.fill || '#ff4d4d',
+              fontSize: `${(pdfEditingText.style?.fontSize || 18) * pdfDisplayScale}px`,
+              padding: `${6 * pdfDisplayScale}px`,
+            }}
+            value={textDraft}
+          />
+        ) : null}
+        {visibleSelection.map((annotationId) => {
+          const annotation = getAnnotationById(annotationId)
+          const chipStyle = annotation
+            ? getAnnotationDragChipStyle(annotation, { width, height })
+            : null
+          if (!annotation || !chipStyle) return null
+          return (
+            <button
+              className="a-object-drag-chip"
+              draggable
+              key={annotation.id}
+              onClick={(event) => event.stopPropagation()}
+              onDragStart={(event) => startAObjectDrag(event, selectedAnnotationIds)}
+              style={chipStyle}
+              title="Drag selected A object to B Workflow"
+              type="button"
+            >
+              A
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const pdfInteractionLockedFrame = frames.find((item) => (
+    item.id === pdfInteractionLockedFrameId
+  ))
+  const pdfInteractionLockedPage = pdfInteractionLockedFrame?.locator?.physicalPage
+    ?? pdfInteractionLockedFrame?.locator?.page
+    ?? null
 
   const closeContextMenu = () => {
     setContextMenu(null)
@@ -932,7 +1156,9 @@ export default function ABEditor({
           }}
         >
             <div
-              className={zoomMode === 'fit' ? 'media-view-area fit' : 'media-view-area manual'}
+              className={isPdfSource
+                ? 'media-view-area pdf'
+                : zoomMode === 'fit' ? 'media-view-area fit' : 'media-view-area manual'}
               ref={mediaViewRef}
             >
               {isImageSource ? (
@@ -1052,9 +1278,31 @@ export default function ABEditor({
                     videoSeekRequest={videoSeekRequest}
                   />
                 </div>
+              ) : isPdfSource ? (
+                <PdfViewer
+                  currentPage={pdfPage}
+                  fileName={source.fileName}
+                  fileUrl={source.fileUrl}
+                  interactionLockedPage={pdfInteractionLockedPage}
+                  key={source.fileUrl}
+                  navigationRequest={pdfNavigationRequest}
+                  onActualSize={onActualSizeZoom}
+                  onDocumentInfo={onPdfDocumentInfo}
+                  onFit={onFitZoom}
+                  onPageChange={onPdfPageChange}
+                  onPageInfo={onPdfPageInfo}
+                  onPageSnapshot={onPdfPageSnapshot}
+                  onViewModeChange={onPdfViewModeChange}
+                  onZoomChange={onZoomChange}
+                  viewMode={pdfViewMode}
+                  zoom={zoom}
+                  zoomMode={zoomMode}
+                  renderSinglePageOverlay={renderPdfAnnotationOverlay}
+                  renderContinuousPageOverlay={renderPdfContinuousOverlay}
+                />
               ) : (
                 <div className="media-stage-placeholder">
-                  {displayMessage || 'Open an image or video to start.'}
+                  {displayMessage || 'Open an image, video, or PDF to start.'}
                 </div>
               )}
             </div>
@@ -1113,8 +1361,8 @@ export default function ABEditor({
           bottomPanelHeight={bWorkflowBottomPanelHeight}
           getAnnotationPreview={getAnnotationPreview}
           ensureAnnotationPreview={ensureAnnotationPreview}
-          imageUrl={isVideoSource ? undefined : framePreviewUrl}
-          imageSize={isVideoSource ? undefined : imageSize}
+          imageUrl={isVideoSource || isPdfSource ? undefined : framePreviewUrl}
+          imageSize={isVideoSource || isPdfSource ? undefined : imageSize}
           onExportEntity={onExportSelectedEntity}
           onExportSelectedEntityItems={onExportSelectedEntityItems}
           canGoToAnnotation={canGoToAnnotation}
@@ -1198,6 +1446,14 @@ export default function ABEditor({
         <span>View: <strong>{viewSize ? `${Math.round(viewSize.width)} x ${Math.round(viewSize.height)}` : '--'}</strong></span>
         <span>Fit: <strong>contain</strong></span>
         <span>Zoom: <strong>{zoomMode === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</strong></span>
+        {isPdfSource ? (
+          <span>
+            Page: <strong>{pdfPage} / {source.meta?.pageCount || '--'}</strong>
+            {frame?.meta?.bookPageLabel != null
+              ? <> · Book: <strong>{frame.meta.bookPageLabel}</strong></>
+              : null}
+          </span>
+        ) : null}
         <span>Input: <strong>{displayInput?.kind || '--'}</strong></span>
         <span>
           Entity:{' '}

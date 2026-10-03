@@ -337,6 +337,8 @@ button.active-tool {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: inherit;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -506,6 +508,238 @@ button.active-tool {
 
 .media-view-area.manual {
   overflow: auto;
+}
+
+.media-view-area.pdf {
+  overflow: hidden;
+}
+
+.pdf-viewer {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 36px minmax(0, 1fr);
+  background: #171717;
+}
+
+.pdf-viewer-toolbar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid #393939;
+  background: #202020;
+  color: #d8d1c0;
+  font-size: 11px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.pdf-viewer-toolbar button {
+  height: 26px;
+  padding: 0 9px;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.pdf-viewer-toolbar button.active {
+  border-color: #c99b33;
+  background: #4b3d1f;
+  color: #fff1be;
+}
+
+.pdf-viewer-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.pdf-viewer-toolbar input {
+  width: 62px;
+  height: 24px;
+  padding: 0 5px;
+  border: 1px solid #555;
+  background: #111;
+  color: #f2ead6;
+  font: inherit;
+}
+
+.pdf-toolbar-separator {
+  width: 1px;
+  height: 20px;
+  flex: 0 0 1px;
+  background: #555;
+}
+
+.pdf-document-viewport {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: #343434;
+  scrollbar-color: #6a6253 #222;
+  scrollbar-width: thin;
+}
+
+.pdf-document-viewport .react-pdf__Document {
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.pdf-single-page {
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.pdf-single-page-surface {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.pdf-page-buffer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.pdf-page-buffer-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.pdf-page-buffer-layer.active {
+  z-index: 1;
+  opacity: 1;
+}
+
+.pdf-page-buffer-layer.pending {
+  z-index: 0;
+  opacity: 0;
+}
+
+.pdf-single-page-surface > .annotation-layer-host {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+.pdf-page-shell > .annotation-layer-host {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.pdf-interaction-locked-out {
+  cursor: not-allowed;
+}
+
+.pdf-interaction-locked-out canvas {
+  cursor: not-allowed;
+}
+
+.pdf-single-page .react-pdf__Page,
+.pdf-page-shell .react-pdf__Page {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+}
+
+.pdf-continuous-pages {
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px 48px;
+  box-sizing: border-box;
+}
+
+.pdf-page-shell {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: start;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+}
+
+.pdf-page-shell.current {
+  outline: 2px solid #d1a13a;
+  outline-offset: 3px;
+}
+
+.pdf-page-number {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 6px;
+  min-width: 24px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(20, 20, 20, 0.72);
+  color: #fff;
+  text-align: center;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.pdf-navigation-highlight {
+  position: absolute;
+  z-index: 4;
+  box-sizing: border-box;
+  border: 3px solid #ffd45a;
+  border-radius: 3px;
+  background: rgba(255, 212, 90, 0.12);
+  box-shadow: 0 0 0 2px rgba(24, 20, 10, 0.6), 0 0 14px rgba(255, 212, 90, 0.9);
+  pointer-events: none;
+  animation: pdf-navigation-highlight-pulse 1.2s ease-out forwards;
+}
+
+@keyframes pdf-navigation-highlight-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+
+  18%, 68% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+.pdf-page-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #f2f2f2;
+  color: #777;
+  font-size: 13px;
+}
+
+.pdf-load-message {
+  padding: 28px;
+  color: #ddd;
+  text-align: center;
+}
+
+.pdf-load-message.error {
+  color: #ff8989;
 }
 
 .media-view-area::-webkit-scrollbar,

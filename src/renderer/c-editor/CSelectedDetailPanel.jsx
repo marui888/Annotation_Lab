@@ -4,7 +4,11 @@ import EntityListPreview from '../workflow/EntityListPreview'
 import CompositeListPreview from './CompositeListPreview'
 import { getCItemSummary, getTextPreviewInfo, TEXT_PREVIEW_LIMIT } from './cEditorUtils'
 import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
-import { resolveEntitySourceKind } from '../domain/entitySourceKind'
+import { VIDEO_PREVIEW_PRIORITIES } from '../media/videoFramePreviewCache'
+import {
+  applyEntityPreviewSnapshot,
+  prepareEntityPreview,
+} from './entityPreviewResources'
 
 function toLabFileUrl(filePath) {
   return `lab-file://local/${encodeURIComponent(filePath)}`
@@ -13,29 +17,6 @@ function toLabFileUrl(filePath) {
 function getFileName(filePath = '') {
   const normalized = String(filePath || '').replace(/\\/g, '/')
   return normalized.split('/').filter(Boolean).pop() || filePath || '--'
-}
-
-function createEntityPreviewData(result, entityId) {
-  if (!result?.ok) return result || { ok: false, reason: 'loadAnnotationFileByPath-unavailable' }
-  const entity = (result.data?.entities || []).find((item) => item.id === entityId) || null
-  return {
-    ok: Boolean(entity),
-    annotations: result.data?.annotations || [],
-    entity,
-    imageSize: result.image?.width && result.image?.height
-      ? {
-          width: result.image.width,
-          height: result.image.height,
-        }
-      : null,
-    imageUrl: result.image?.fileUrl || '',
-    reason: entity ? '' : 'entity-not-found',
-    sourceKind: resolveEntitySourceKind(
-      result.data?.sources?.[0]?.kind,
-      result.sourceFilePath,
-      result.annotationFilePath,
-    ),
-  }
 }
 
 function clamp(value, min, max) {
@@ -262,6 +243,7 @@ function EntityDetail({
       activeView={activeView}
       annotations={data.annotations}
       entity={data.entity}
+      getAnnotationPreview={(annotation) => data.annotationPreviews?.[annotation?.id] || null}
       imageSize={data.imageSize}
       imageUrl={data.imageUrl}
       onActiveViewChange={onActiveViewChange}
@@ -274,7 +256,9 @@ export default function CSelectedDetailPanel({
   onOpenBRef,
   onOpenCRef,
   onUpdateItemText,
+  previewResources,
   selectedCItem,
+  workspaceId = '',
 }) {
   const [loadState, setLoadState] = useState({ key: '', status: 'idle' })
   const [entityDetailView, setEntityDetailView] = useState('list')
@@ -288,9 +272,11 @@ export default function CSelectedDetailPanel({
     ? { key: loadTarget.key, status: 'loading' }
     : loadState
   const isSelectedImage = selectedCItem?.type === 'file-ref' && selectedCItem.fileKind === 'image'
+  const selectedPreviewScopeId = `${workspaceId || 'c-workspace'}:selected`
 
   useEffect(() => {
     if (!loadTarget) {
+      previewResources.videoFrames.releaseScope(selectedPreviewScopeId)
       return undefined
     }
 
@@ -298,16 +284,64 @@ export default function CSelectedDetailPanel({
 
     async function loadSelectedDetail() {
       if (loadTarget.kind === 'b-entity') {
-        const result = await window.labApi?.loadAnnotationFileByPath?.(loadTarget.filePath)
-        if (!canceled) {
+        const result = await previewResources.annotationFiles.load(loadTarget.filePath)
+        if (canceled) return
+        const prepared = prepareEntityPreview(result, loadTarget.entityId, previewResources.videoFrames)
+        if (!prepared.ok) {
+          previewResources.videoFrames.releaseScope(selectedPreviewScopeId)
           setLoadState({
             key: loadTarget.key,
             status: 'ready',
-            ...createEntityPreviewData(result, loadTarget.entityId),
+            ...prepared,
           })
+          return
         }
+        const { activeFrameKeys, targets, ...previewState } = prepared
+        if (entityDetailView === 'preview') {
+          previewResources.videoFrames.setActiveKeys(
+            selectedPreviewScopeId,
+            activeFrameKeys,
+            VIDEO_PREVIEW_PRIORITIES.selected,
+          )
+        } else {
+          previewResources.videoFrames.releaseScope(selectedPreviewScopeId)
+        }
+        setLoadState({
+          key: loadTarget.key,
+          status: 'ready',
+          ...previewState,
+          annotationPreviews: entityDetailView === 'preview'
+            ? previewState.annotationPreviews
+            : {},
+        })
+        if (entityDetailView !== 'preview') return
+        targets.forEach((target) => {
+          previewResources.videoFrames.request({
+            key: target.frameKey,
+            mediaKind: target.mediaKind,
+            page: target.page,
+            priority: VIDEO_PREVIEW_PRIORITIES.selected,
+            renderScale: target.renderScale,
+            src: target.src,
+            time: target.time,
+          }).then((snapshot) => {
+            if (canceled) return
+            setLoadState((current) => current.key === loadTarget.key
+              ? {
+                  ...current,
+                  annotationPreviews: applyEntityPreviewSnapshot(
+                    current.annotationPreviews,
+                    target,
+                    snapshot,
+                  ),
+                }
+              : current)
+          })
+        })
         return
       }
+
+      previewResources.videoFrames.releaseScope(selectedPreviewScopeId)
 
       if (loadTarget.kind === 'text-file') {
         const result = await window.labApi?.readTextFile?.(loadTarget.filePath)
@@ -334,8 +368,9 @@ export default function CSelectedDetailPanel({
     loadSelectedDetail()
     return () => {
       canceled = true
+      previewResources.videoFrames.releaseScope(selectedPreviewScopeId)
     }
-  }, [loadTarget])
+  }, [entityDetailView, loadTarget, previewResources, selectedPreviewScopeId])
 
   const openSelectedEntity = () => {
     if (selectedCItem?.type === 'b-ref') {
@@ -457,7 +492,9 @@ export default function CSelectedDetailPanel({
             cDocumentFilePath={selectedCItem.ref.cFilePath}
             onActiveViewChange={setCompositeDetailView}
             onSelectItem={() => {}}
+            previewResources={previewResources}
             selectedCItemId=""
+            workspaceId={workspaceId}
           />
         ) : (
           <div className="c-preview-load-state">{detailState.reason || 'Composite preview unavailable.'}</div>

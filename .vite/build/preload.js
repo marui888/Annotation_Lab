@@ -3,7 +3,9 @@ let electron = require("electron");
 electron.contextBridge.exposeInMainWorld("labApi", {
 	openImage: () => electron.ipcRenderer.invoke("file:openImage"),
 	openVideo: () => electron.ipcRenderer.invoke("file:openVideo"),
+	openPdf: () => electron.ipcRenderer.invoke("file:openPdf"),
 	loadImageByPath: (filePath) => electron.ipcRenderer.invoke("file:loadImageByPath", filePath),
+	loadPdfByPath: (filePath) => electron.ipcRenderer.invoke("file:loadPdfByPath", filePath),
 	openAnnotationFile: () => electron.ipcRenderer.invoke("annotation:openFile"),
 	importSimpleNotes: () => electron.ipcRenderer.invoke("annotation:importSimpleNotes"),
 	readAnnotationFileRaw: (annotationFilePath) => electron.ipcRenderer.invoke("annotation:readRawByPath", annotationFilePath),
