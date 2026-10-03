@@ -675,15 +675,15 @@ function App() {
           ? (source?.fileName || getInputTitle(currentABInput))
           : session.title,
         dirty: isActive
-          ? saveStatus === 'Unsaved'
-          : session.saveStatus === 'Unsaved',
+          ? isUnsavedSaveStatus(saveStatus)
+          : isUnsavedSaveStatus(session.saveStatus),
       }
     }),
     ...cWorkspaceEntries.map(([workspaceId, workspace]) => ({
       id: workspaceId,
       type: 'c',
       title: workspace.cDocument.title || getPathFileName(workspace.cDocumentFilePath) || 'CompositeEditor',
-      dirty: workspace.cSaveStatus === 'Unsaved',
+      dirty: isUnsavedSaveStatus(workspace.cSaveStatus),
     })),
   ]
 
@@ -4386,7 +4386,7 @@ function App() {
               >
                 <span>{tab.type === 'ab' ? 'A/B' : 'C'}</span>
                 <strong>{tab.title}</strong>
-                {tab.dirty ? <em>Unsaved</em> : null}
+                {tab.dirty ? <em aria-label="Unsaved" title="Unsaved">*</em> : null}
               </button>
             </div>
           ))}

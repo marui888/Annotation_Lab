@@ -24,6 +24,7 @@ import {
 } from './arrowInteraction'
 import ResizableRect from './ResizableRect'
 import {
+  constrainPointToOrthogonal,
   getPointDistance,
   getPolygonArea,
   hasPolygonSelfIntersection,
@@ -99,6 +100,10 @@ function getRepairOpenPath(repair, candidatePoint = null) {
   ]
 }
 
+function isOrthogonalSegment(start, end) {
+  return Math.abs(start.x - end.x) < 0.5 || Math.abs(start.y - end.y) < 0.5
+}
+
 export default function MediaAnnotationLayer({
   annotations,
   frameId,
@@ -121,6 +126,7 @@ export default function MediaAnnotationLayer({
   const [draftArrow, setDraftArrow] = useState(null)
   const [draftPolygonPoints, setDraftPolygonPoints] = useState([])
   const [polygonHoverPoint, setPolygonHoverPoint] = useState(null)
+  const [polygonHoverOrthogonal, setPolygonHoverOrthogonal] = useState(false)
   const [dragState, setDragState] = useState(null)
   const [hoveredPolygonEdge, setHoveredPolygonEdge] = useState(null)
   const [selectedPolygonEdges, setSelectedPolygonEdges] = useState(null)
@@ -189,6 +195,26 @@ export default function MediaAnnotationLayer({
 
   const confirmPolygonEdgeDelete = () => {
     if (!pendingPolygonEdgeDelete) return
+    if (pendingPolygonEdgeDelete.repairBoundaries?.length) {
+      setPolygonRepair((current) => {
+        if (!current || current.annotationId !== pendingPolygonEdgeDelete.annotationId) return current
+        const deleteStart = pendingPolygonEdgeDelete.repairBoundaries.includes('start')
+        const deleteEnd = pendingPolygonEdgeDelete.repairBoundaries.includes('end')
+        const startIndex = deleteStart ? 1 : 0
+        const endIndex = current.retainedPoints.length - (deleteEnd ? 1 : 0)
+        const retainedPoints = current.retainedPoints.slice(startIndex, endIndex)
+        if (retainedPoints.length < 2) return current
+        return {
+          ...current,
+          retainedPoints,
+          selectedBoundaryEdges: [],
+          hoveredBoundaryEdge: null,
+        }
+      })
+      setPendingPolygonEdgeDelete(null)
+      return
+    }
+
     const annotation = annotations.find((item) => item.id === pendingPolygonEdgeDelete.annotationId)
     const points = annotation?.type === 'polygon'
       ? denormalizePolygon(annotation.geometry, size)
@@ -205,7 +231,15 @@ export default function MediaAnnotationLayer({
       drawingFrom: null,
       addedPoints: [],
       hoverPoint: null,
+      hoverOrthogonal: false,
+      selectedBoundaryEdges: [],
+      hoveredBoundaryEdge: null,
     })
+    setDraftPolygonPoints([])
+    setPolygonHoverPoint(null)
+    setPolygonHoverOrthogonal(false)
+    setDraftRect(null)
+    setDraftArrow(null)
     setSelectedPolygonEdges(null)
     setHoveredPolygonEdge(null)
     setPendingPolygonEdgeDelete(null)
@@ -217,7 +251,28 @@ export default function MediaAnnotationLayer({
       drawingFrom: endpoint,
       addedPoints: [],
       hoverPoint: null,
+      hoverOrthogonal: false,
+      selectedBoundaryEdges: [],
+      hoveredBoundaryEdge: null,
     } : current)
+  }
+
+  const selectPolygonRepairBoundaryEdge = (boundary, additive) => {
+    setPolygonRepair((current) => {
+      if (!current || current.drawingFrom || current.retainedPoints.length <= 2) return current
+      const selected = current.selectedBoundaryEdges || []
+      const alreadySelected = selected.includes(boundary)
+      const nextSelected = additive
+        ? alreadySelected
+          ? selected.filter((item) => item !== boundary)
+          : [...selected, boundary]
+        : [boundary]
+      if (current.retainedPoints.length - nextSelected.length < 2) return current
+      return {
+        ...current,
+        selectedBoundaryEdges: nextSelected,
+      }
+    })
   }
 
   const completePolygonRepair = (repair) => {
@@ -235,25 +290,30 @@ export default function MediaAnnotationLayer({
     return true
   }
 
-  const addPolygonRepairPoint = (position) => {
+  const addPolygonRepairPoint = (position, constrainOrthogonal = false) => {
     if (!polygonRepair?.drawingFrom) return
     const targetPoint = polygonRepair.drawingFrom === 'start'
       ? polygonRepair.retainedPoints[polygonRepair.retainedPoints.length - 1]
       : polygonRepair.retainedPoints[0]
     const openPath = getRepairOpenPath(polygonRepair)
     const lastPoint = openPath[openPath.length - 1]
+    const nextPosition = constrainOrthogonal && lastPoint
+      ? clampPointToSize(constrainPointToOrthogonal(lastPoint, position), size)
+      : position
 
-    if (getPointDistance(position, targetPoint) <= POLYGON_CLOSE_DISTANCE) {
+    if (getPointDistance(nextPosition, targetPoint) <= POLYGON_CLOSE_DISTANCE
+      && (!constrainOrthogonal || isOrthogonalSegment(lastPoint, targetPoint))) {
       completePolygonRepair(polygonRepair)
       return
     }
-    if (lastPoint && getPointDistance(position, lastPoint) < MIN_POLYGON_POINT_DISTANCE) return
-    const nextPath = getRepairOpenPath(polygonRepair, position)
+    if (lastPoint && getPointDistance(nextPosition, lastPoint) < MIN_POLYGON_POINT_DISTANCE) return
+    const nextPath = getRepairOpenPath(polygonRepair, nextPosition)
     if (hasPolygonSelfIntersection(nextPath, false)) return
     setPolygonRepair((current) => current ? {
       ...current,
-      addedPoints: [...current.addedPoints, clampPointToSize(position, size)],
-      hoverPoint: position,
+      addedPoints: [...current.addedPoints, clampPointToSize(nextPosition, size)],
+      hoverPoint: nextPosition,
+      hoverOrthogonal: constrainOrthogonal,
     } : current)
   }
 
@@ -265,9 +325,13 @@ export default function MediaAnnotationLayer({
       setHoveredPolygonEdge(null)
     }
     if (polygonRepair && !selectedAnnotationIds.includes(polygonRepair.annotationId)) {
-      setPolygonRepair(null)
+      if (annotations.some((annotation) => annotation.id === polygonRepair.annotationId)) {
+        onSelectAnnotation?.(polygonRepair.annotationId)
+      } else {
+        setPolygonRepair(null)
+      }
     }
-  }, [polygonRepair, selectedAnnotationIds, selectedPolygonEdges])
+  }, [annotations, onSelectAnnotation, polygonRepair, selectedAnnotationIds, selectedPolygonEdges])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -329,24 +393,30 @@ export default function MediaAnnotationLayer({
     })
     setDraftPolygonPoints([])
     setPolygonHoverPoint(null)
+    setPolygonHoverOrthogonal(false)
     return true
   }, [draftPolygonPoints, frameId, onAddAnnotation, size])
 
-  const addPolygonPoint = (position) => {
+  const addPolygonPoint = (position, constrainOrthogonal = false) => {
     const firstPoint = draftPolygonPoints[0]
     const lastPoint = draftPolygonPoints[draftPolygonPoints.length - 1]
+    const nextPosition = constrainOrthogonal && lastPoint
+      ? clampPointToSize(constrainPointToOrthogonal(lastPoint, position), size)
+      : position
 
     if (firstPoint && draftPolygonPoints.length >= 3
-      && getPointDistance(position, firstPoint) <= POLYGON_CLOSE_DISTANCE) {
+      && getPointDistance(nextPosition, firstPoint) <= POLYGON_CLOSE_DISTANCE
+      && (!constrainOrthogonal || isOrthogonalSegment(lastPoint, firstPoint))) {
       completePolygon()
       return
     }
 
-    if (lastPoint && getPointDistance(position, lastPoint) < MIN_POLYGON_POINT_DISTANCE) return
-    const nextPoints = [...draftPolygonPoints, position]
+    if (lastPoint && getPointDistance(nextPosition, lastPoint) < MIN_POLYGON_POINT_DISTANCE) return
+    const nextPoints = [...draftPolygonPoints, nextPosition]
     if (hasPolygonSelfIntersection(nextPoints, false)) return
     setDraftPolygonPoints(nextPoints)
-    setPolygonHoverPoint(position)
+    setPolygonHoverPoint(nextPosition)
+    setPolygonHoverOrthogonal(constrainOrthogonal)
   }
 
   useEffect(() => {
@@ -364,6 +434,10 @@ export default function MediaAnnotationLayer({
 
       if (event.key === 'Enter' && draftPolygonPoints.length >= 3) {
         event.preventDefault()
+        if (event.ctrlKey && !isOrthogonalSegment(
+          draftPolygonPoints[draftPolygonPoints.length - 1],
+          draftPolygonPoints[0]
+        )) return
         completePolygon()
         return
       }
@@ -373,6 +447,7 @@ export default function MediaAnnotationLayer({
         if (draftPolygonPoints.length > 0) {
           setDraftPolygonPoints([])
           setPolygonHoverPoint(null)
+          setPolygonHoverOrthogonal(false)
         } else {
           onToolModeChange?.('select')
         }
@@ -395,6 +470,15 @@ export default function MediaAnnotationLayer({
         event.preventDefault()
         event.stopPropagation()
         event.stopImmediatePropagation?.()
+        const repairBoundaries = polygonRepair.drawingFrom
+          ? []
+          : polygonRepair.selectedBoundaryEdges || []
+        if (repairBoundaries.length > 0) {
+          setPendingPolygonEdgeDelete({
+            annotationId: polygonRepair.annotationId,
+            repairBoundaries: [...repairBoundaries],
+          })
+        }
         return
       }
 
@@ -464,24 +548,32 @@ export default function MediaAnnotationLayer({
   const handleClick = (event) => {
     if (polygonRepair?.drawingFrom && event.target === event.target.getStage()) {
       const position = getPointerPosition(event)
-      if (position && canUseStage) addPolygonRepairPoint(position)
+      if (position && canUseStage) addPolygonRepairPoint(position, Boolean(event.evt?.ctrlKey))
       return
     }
+    if (polygonRepair) return
     if (mode !== 'polygon' || event.target !== event.target.getStage()) return
     const position = getPointerPosition(event)
     if (!position || !canUseStage) return
-    addPolygonPoint(position)
+    addPolygonPoint(position, Boolean(event.evt?.ctrlKey))
   }
 
   const handleContextMenu = (event) => {
     event.evt?.preventDefault?.()
+    if (polygonRepair) return
     if (event.target !== event.target.getStage()) return
     onCanvasContextMenu?.(event.evt.clientX, event.evt.clientY)
   }
 
   const handleDoubleClick = (event) => {
+    if (polygonRepair) return
     if (event.target !== event.target.getStage()) return
     if (mode === 'polygon') {
+      if (event.evt?.ctrlKey && draftPolygonPoints.length >= 3
+        && !isOrthogonalSegment(
+          draftPolygonPoints[draftPolygonPoints.length - 1],
+          draftPolygonPoints[0]
+        )) return
       completePolygon()
       return
     }
@@ -585,12 +677,25 @@ export default function MediaAnnotationLayer({
     }
 
     if (polygonRepair?.drawingFrom) {
-      setPolygonRepair((current) => current ? { ...current, hoverPoint: position } : current)
+      const openPath = getRepairOpenPath(polygonRepair)
+      const lastPoint = openPath[openPath.length - 1]
+      const hoverPoint = event.evt?.ctrlKey && lastPoint
+        ? clampPointToSize(constrainPointToOrthogonal(lastPoint, position), size)
+        : position
+      setPolygonRepair((current) => current ? {
+        ...current,
+        hoverPoint,
+        hoverOrthogonal: Boolean(event.evt?.ctrlKey),
+      } : current)
       return
     }
 
     if (mode === 'polygon' && draftPolygonPoints.length > 0) {
-      setPolygonHoverPoint(position)
+      const lastPoint = draftPolygonPoints[draftPolygonPoints.length - 1]
+      setPolygonHoverPoint(event.evt?.ctrlKey && lastPoint
+        ? clampPointToSize(constrainPointToOrthogonal(lastPoint, position), size)
+        : position)
+      setPolygonHoverOrthogonal(Boolean(event.evt?.ctrlKey))
     }
   }
 
@@ -684,6 +789,7 @@ export default function MediaAnnotationLayer({
   }
 
   const startRectMove = (annotationId, event) => {
+    if (polygonRepair) return
     const annotation = annotations.find((item) => item.id === annotationId)
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
@@ -698,6 +804,7 @@ export default function MediaAnnotationLayer({
   }
 
   const startRectResize = (annotationId, handle, event) => {
+    if (polygonRepair) return
     const annotation = annotations.find((item) => item.id === annotationId)
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
@@ -713,6 +820,7 @@ export default function MediaAnnotationLayer({
   }
 
   const startArrowDrag = (annotationId, kind, handle, event) => {
+    if (polygonRepair) return
     const annotation = annotations.find((item) => item.id === annotationId)
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
@@ -728,6 +836,7 @@ export default function MediaAnnotationLayer({
   }
 
   const startPolygonDrag = (annotationId, kind, vertexIndex, event, edgeIndex = null) => {
+    if (polygonRepair) return
     const annotation = annotations.find((item) => item.id === annotationId)
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
@@ -748,6 +857,11 @@ export default function MediaAnnotationLayer({
   const startPolygonRepairVertexDrag = (vertexIndex, event) => {
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!polygonRepair || !pointer) return
+    setPolygonRepair((current) => current ? {
+      ...current,
+      selectedBoundaryEdges: [],
+      hoveredBoundaryEdge: null,
+    } : current)
     setDragState({
       type: 'polygon-repair',
       kind: 'vertex',
@@ -760,6 +874,7 @@ export default function MediaAnnotationLayer({
   }
 
   const selectInnermostPolygon = (point, event) => {
+    if (polygonRepair) return
     const candidates = annotations
       .map((annotation, index) => ({
         annotation,
@@ -780,6 +895,10 @@ export default function MediaAnnotationLayer({
     polygonHoverPoint
     && draftPolygonPoints.length >= 3
     && getPointDistance(polygonHoverPoint, draftPolygonPoints[0]) <= POLYGON_CLOSE_DISTANCE
+    && (!polygonHoverOrthogonal || isOrthogonalSegment(
+      draftPolygonPoints[draftPolygonPoints.length - 1],
+      draftPolygonPoints[0]
+    ))
   )
   const polygonHoverInvalid = polygonHoverPoint && draftPolygonPoints.length > 0
     ? polygonHoverCloses
@@ -795,6 +914,10 @@ export default function MediaAnnotationLayer({
     polygonRepair?.hoverPoint
     && polygonRepairTarget
     && getPointDistance(polygonRepair.hoverPoint, polygonRepairTarget) <= POLYGON_CLOSE_DISTANCE
+    && (!polygonRepair.hoverOrthogonal || isOrthogonalSegment(
+      getRepairOpenPath(polygonRepair)[getRepairOpenPath(polygonRepair).length - 1],
+      polygonRepairTarget
+    ))
   )
   const polygonRepairHoverInvalid = polygonRepair?.drawingFrom && polygonRepair?.hoverPoint
     ? polygonRepairHoverCloses
@@ -806,8 +929,14 @@ export default function MediaAnnotationLayer({
   const openAnnotationContextMenu = (annotationId, event) => {
     event.evt?.preventDefault?.()
     event.cancelBubble = true
+    if (polygonRepair) return
     if (!selectedAnnotationIds.includes(annotationId)) return
     onAObjectContextMenu?.(annotationId, event.evt.clientX, event.evt.clientY)
+  }
+
+  const selectAnnotationUnlessRepairing = (annotationId, event) => {
+    if (polygonRepair) return
+    onSelectAnnotation?.(annotationId, event)
   }
 
   return (
@@ -820,9 +949,14 @@ export default function MediaAnnotationLayer({
       onDblClick={handleDoubleClick}
       onMouseLeave={() => {
         setPolygonHoverPoint(null)
+        setPolygonHoverOrthogonal(false)
         setHoveredPolygonEdge(null)
         if (polygonRepair?.drawingFrom) {
-          setPolygonRepair((current) => current ? { ...current, hoverPoint: null } : current)
+          setPolygonRepair((current) => current ? {
+            ...current,
+            hoverPoint: null,
+            hoverOrthogonal: false,
+          } : current)
         }
       }}
       onMouseDown={handleMouseDown}
@@ -845,7 +979,7 @@ export default function MediaAnnotationLayer({
                 onContextMenu={openAnnotationContextMenu}
                 onDragStart={startRectMove}
                 onHandleDragStart={startRectResize}
-                onSelect={onSelectAnnotation}
+                onSelect={selectAnnotationUnlessRepairing}
                 rect={rect}
               />
             )
@@ -858,12 +992,14 @@ export default function MediaAnnotationLayer({
             return (
               <Group
                 key={annotation.id}
-                onDblClick={() => onEditTextAnnotation?.(annotation.id)}
+                onDblClick={() => {
+                  if (!polygonRepair) onEditTextAnnotation?.(annotation.id)
+                }}
                 onContextMenu={(event) => openAnnotationContextMenu(annotation.id, event)}
                 onMouseDown={(event) => {
                   event.cancelBubble = true
                   if (event.evt?.button === 2) return
-                  onSelectAnnotation(annotation.id, event)
+                  selectAnnotationUnlessRepairing(annotation.id, event)
                   startRectMove(annotation.id, event)
                 }}
               >
@@ -895,7 +1031,7 @@ export default function MediaAnnotationLayer({
                     isSelected
                     onDragStart={startRectMove}
                     onHandleDragStart={startRectResize}
-                    onSelect={onSelectAnnotation}
+                    onSelect={selectAnnotationUnlessRepairing}
                     rect={rect}
                   />
                 ) : null}
@@ -918,7 +1054,7 @@ export default function MediaAnnotationLayer({
                     const position = getPointerPosition(event)
                     event.cancelBubble = true
                     if (event.evt?.button === 2) return
-                    onSelectAnnotation(annotation.id, event)
+                    selectAnnotationUnlessRepairing(annotation.id, event)
 
                     if (!position) return
                     const handle = findArrowHandle(position, arrow)
@@ -942,7 +1078,7 @@ export default function MediaAnnotationLayer({
                   onMouseDown={(event) => {
                     event.cancelBubble = true
                     if (event.evt?.button === 2) return
-                    onSelectAnnotation(annotation.id, event)
+                    selectAnnotationUnlessRepairing(annotation.id, event)
                     startArrowDrag(annotation.id, 'move', null, event)
                   }}
                   pointerLength={pointerLength}
@@ -991,6 +1127,21 @@ export default function MediaAnnotationLayer({
               const drawnRepairPoints = drawingSource
                 ? [drawingSource, ...activeRepair.addedPoints]
                 : []
+              const repairBoundaryEdges = !activeRepair.drawingFrom && activeRepair.retainedPoints.length > 2
+                ? [
+                    {
+                      boundary: 'start',
+                      points: [activeRepair.retainedPoints[0], activeRepair.retainedPoints[1]],
+                    },
+                    {
+                      boundary: 'end',
+                      points: [
+                        activeRepair.retainedPoints[activeRepair.retainedPoints.length - 2],
+                        activeRepair.retainedPoints[activeRepair.retainedPoints.length - 1],
+                      ],
+                    },
+                  ]
+                : []
               return (
                 <Group key={annotation.id}>
                   <Line
@@ -998,6 +1149,42 @@ export default function MediaAnnotationLayer({
                     stroke="#ffd45a"
                     strokeWidth={3}
                   />
+                  {repairBoundaryEdges.map((edge) => {
+                    const selected = activeRepair.selectedBoundaryEdges?.includes(edge.boundary)
+                    const hovered = activeRepair.hoveredBoundaryEdge === edge.boundary
+                    if (!selected && !hovered) return null
+                    return (
+                      <Line
+                        key={`repair-boundary-highlight-${edge.boundary}`}
+                        listening={false}
+                        points={toFlatPoints(edge.points)}
+                        stroke={selected ? '#ff4d4d' : '#4dd0e1'}
+                        strokeWidth={selected ? 5 : 3}
+                      />
+                    )
+                  })}
+                  {repairBoundaryEdges.map((edge) => (
+                    <Line
+                      key={`repair-boundary-${edge.boundary}`}
+                      onMouseEnter={() => setPolygonRepair((current) => current ? {
+                        ...current,
+                        hoveredBoundaryEdge: edge.boundary,
+                      } : current)}
+                      onMouseLeave={() => setPolygonRepair((current) => (
+                        current?.hoveredBoundaryEdge === edge.boundary
+                          ? { ...current, hoveredBoundaryEdge: null }
+                          : current
+                      ))}
+                      onMouseDown={(event) => {
+                        event.cancelBubble = true
+                        if (event.evt?.button === 2) return
+                        selectPolygonRepairBoundaryEdge(edge.boundary, Boolean(event.evt?.ctrlKey))
+                      }}
+                      points={toFlatPoints(edge.points)}
+                      stroke="rgba(0, 0, 0, 0)"
+                      strokeWidth={POLYGON_EDGE_HIT_WIDTH}
+                    />
+                  ))}
                   {drawnRepairPoints.length > 1 ? (
                     <Line
                       points={toFlatPoints(drawnRepairPoints)}
@@ -1055,7 +1242,13 @@ export default function MediaAnnotationLayer({
                             startPolygonRepair(endpoint)
                             return
                           }
-                          if (isTarget) completePolygonRepair(activeRepair)
+                          if (isTarget) {
+                            const openPath = getRepairOpenPath(activeRepair)
+                            const lastPoint = openPath[openPath.length - 1]
+                            if (!event.evt?.ctrlKey || isOrthogonalSegment(lastPoint, polygonRepairTarget)) {
+                              completePolygonRepair(activeRepair)
+                            }
+                          }
                         }}
                         onMouseDown={(event) => {
                           event.cancelBubble = true
@@ -1228,10 +1421,12 @@ export default function MediaAnnotationLayer({
           <div className="dialog-title">Delete Polygon Edge</div>
           <dl className="dialog-info">
             <dt>Edges</dt>
-            <dd>{pendingPolygonEdgeDelete.edgeIndices.length}</dd>
+            <dd>{pendingPolygonEdgeDelete.repairBoundaries?.length || pendingPolygonEdgeDelete.edgeIndices?.length || 0}</dd>
           </dl>
           <div className="dialog-message">
-            The Polygon will enter an open repair state. Reconnect its two open endpoints to complete the edit.
+            {pendingPolygonEdgeDelete.repairBoundaries?.length
+              ? 'The selected adjacent edge(s) will extend the current opening. Reconnect its two open endpoints to complete the edit.'
+              : 'The Polygon will enter an open repair state. Reconnect its two open endpoints to complete the edit.'}
           </div>
           <div className="dialog-actions">
             <button autoFocus onClick={confirmPolygonEdgeDelete} type="button">Delete</button>

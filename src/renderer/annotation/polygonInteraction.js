@@ -4,6 +4,15 @@ export function getPointDistance(left, right) {
   return Math.hypot(right.x - left.x, right.y - left.y)
 }
 
+export function constrainPointToOrthogonal(start, point) {
+  if (!start || !point) return point
+  const dx = point.x - start.x
+  const dy = point.y - start.y
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: point.x, y: start.y }
+    : { x: start.x, y: point.y }
+}
+
 export function getPolygonArea(points = []) {
   if (points.length < 3) return 0
   let twiceArea = 0
