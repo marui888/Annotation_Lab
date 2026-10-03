@@ -1,4 +1,5 @@
 import { createId } from '../core/id'
+import { resolveEntitySourceKind } from './entitySourceKind'
 
 export const C_DOCUMENT_KINDS = [
   { value: 'collection', label: 'Collection' },
@@ -61,6 +62,11 @@ export function normalizeCItem(raw) {
   }
 
   if (raw.type === 'b-ref' && raw.ref?.dataFilePath && raw.ref?.entityId) {
+    const sourceKind = resolveEntitySourceKind(
+      raw.snapshot?.sourceKind,
+      raw.ref.sourceFilePath,
+      raw.ref.dataFilePath,
+    )
     return {
       ...common,
       type: 'b-ref',
@@ -69,7 +75,9 @@ export function normalizeCItem(raw) {
         sourceFilePath: raw.ref.sourceFilePath || '',
         entityId: raw.ref.entityId,
       },
-      snapshot: raw.snapshot || null,
+      snapshot: raw.snapshot
+        ? { ...raw.snapshot, sourceKind }
+        : sourceKind === 'unknown' ? null : { sourceKind },
     }
   }
 
@@ -128,6 +136,11 @@ export function createBRefItem(indexItem) {
       subject: indexItem.subject,
       kind: indexItem.kind,
       label: indexItem.label,
+      sourceKind: resolveEntitySourceKind(
+        indexItem.sourceKind,
+        indexItem.sourceFilePath,
+        indexItem.dataFilePath,
+      ),
       aObjectCount: indexItem.aObjectCount,
       ruleOk: indexItem.ruleOk ?? (indexItem.issues || []).length === 0,
       issues: indexItem.issues || [],

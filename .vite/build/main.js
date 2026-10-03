@@ -304,6 +304,9 @@ async function readBEntityIndexItem(dataFilePath) {
 	const text = await fs.readFile(dataFilePath, "utf8");
 	const data = JSON.parse(text);
 	const sourceFilePath = data.sources?.[0]?.filePath || getSourceFilePathFromAnnotation(dataFilePath);
+	const declaredSourceKind = String(data.sources?.[0]?.kind || "").toLowerCase();
+	const sourceExtension = path.extname(sourceFilePath).toLowerCase();
+	const sourceKind = declaredSourceKind === "picture" ? "image" : declaredSourceKind === "image" || declaredSourceKind === "video" || declaredSourceKind === "pdf" ? declaredSourceKind : VIDEO_EXTENSIONS.has(sourceExtension) ? "video" : IMAGE_EXTENSIONS.has(sourceExtension) ? "image" : sourceExtension === ".pdf" ? "pdf" : "unknown";
 	return (Array.isArray(data.entities) ? data.entities : []).map((entity) => {
 		const refs = Array.isArray(entity.aObjectRefs) ? entity.aObjectRefs : (entity.aObjectIds || []).map((aObjectId) => ({
 			aObjectId,
@@ -312,6 +315,7 @@ async function readBEntityIndexItem(dataFilePath) {
 		return {
 			dataFilePath,
 			sourceFilePath,
+			sourceKind,
 			entityId: entity.id,
 			subject: entity.subject,
 			kind: entity.kind,

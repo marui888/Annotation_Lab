@@ -1,0 +1,28 @@
+.entity-source-kind-icon {
+  width: 1.25em;
+  min-width: 1.25em;
+  flex: 0 0 1.25em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #aaa;
+  line-height: 1;
+  margin-inline-end: 0.3em;
+  vertical-align: -0.05em;
+}
+
+.entity-source-kind-icon.image {
+  color: #7fc7ff;
+}
+
+.entity-source-kind-icon.video {
+  color: #ffbd69;
+}
+
+.entity-source-kind-icon.pdf {
+  color: #ff7777;
+}
+
+.entity-source-kind-icon.unknown {
+  color: #999;
+}

@@ -11,6 +11,13 @@ import PickCompositeItemsDialog from './PickCompositeItemsDialog'
 import CReferenceRepairDialog from './reference-repair/CReferenceRepairDialog'
 import EntityRawPreview from '../workflow/EntityRawPreview'
 import { applyEntityFilter } from '../domain/entityFilter'
+import { getEntityAObjectRefs } from '../domain/domainSchemas'
+import {
+  getAnnotationSourceKind,
+  resolveAnnotationFrameTime,
+} from '../media/annotationFrameTime'
+import { createVideoFramePreviewCache } from '../media/videoFramePreviewCache'
+import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
 
 const MIN_SOURCE_WIDTH = 220
 const MIN_BUILDER_WIDTH = 300
@@ -71,6 +78,15 @@ function getBIndexItemKey(item) {
   return `${item.dataFilePath}:${item.entityId}`
 }
 
+function getVideoFramePreviewKey({ media, resolvedFrame }) {
+  return [
+    media?.fileName || '',
+    media?.size || '',
+    media?.mtimeMs || '',
+    resolvedFrame.time,
+  ].join('|')
+}
+
 export default function CompositeEditor({
   bIndexItems,
   bIndexFilter,
@@ -108,6 +124,8 @@ export default function CompositeEditor({
   const selectedDetailRef = useRef(null)
   const sourceAreaRef = useRef(null)
   const lastRepairRequestIdRef = useRef(repairRequestId)
+  const bSourcePreviewRequestIdRef = useRef(0)
+  const [videoFramePreviewCache] = useState(() => createVideoFramePreviewCache())
   const effectiveLayoutState = useMemo(() => ({
     ...DEFAULT_COMPOSITE_LAYOUT,
     ...layoutState,
@@ -140,6 +158,9 @@ export default function CompositeEditor({
   const currentExpandedBSourcePreview = selectedBSourceItem && expandedBSourcePreview.key === expandedBSourceKey
     ? expandedBSourcePreview
     : { key: expandedBSourceKey, status: selectedBSourceItem ? 'loading' : 'idle' }
+  const getBSourceAnnotationPreview = (annotation) => (
+    currentExpandedBSourcePreview.annotationPreviews?.[annotation?.id] || null
+  )
 
   const updateLayoutState = useCallback((patch) => {
     onLayoutStateChange?.({
@@ -219,16 +240,25 @@ export default function CompositeEditor({
     return () => window.clearTimeout(timer)
   }, [repairRequestId])
 
+  useEffect(() => () => {
+    videoFramePreviewCache.clear()
+  }, [videoFramePreviewCache])
+
   useEffect(() => {
     const selectedBItem = selectedBSourceItem
-    if (!selectedBItem) return undefined
-    if (expandedBSourcePreview.key === expandedBSourceKey) return undefined
+    const requestId = bSourcePreviewRequestIdRef.current + 1
+    bSourcePreviewRequestIdRef.current = requestId
+    if (!selectedBItem) {
+      videoFramePreviewCache.setActiveKeys([])
+      return undefined
+    }
 
     let canceled = false
     async function loadBSourcePreview() {
       const result = await window.labApi?.loadAnnotationFileByPath?.(selectedBItem.dataFilePath)
-      if (canceled) return
+      if (canceled || requestId !== bSourcePreviewRequestIdRef.current) return
       if (!result?.ok) {
+        videoFramePreviewCache.setActiveKeys([])
         setExpandedBSourcePreview({
           key: expandedBSourceKey,
           status: 'ready',
@@ -238,24 +268,132 @@ export default function CompositeEditor({
         return
       }
       const entity = (result.data?.entities || []).find((item) => item.id === selectedBItem.entityId) || null
+      if (!entity) {
+        videoFramePreviewCache.setActiveKeys([])
+        setExpandedBSourcePreview({
+          key: expandedBSourceKey,
+          status: 'ready',
+          ok: false,
+          reason: 'entity-not-found',
+        })
+        return
+      }
+
+      const annotations = result.data?.annotations || []
+      const sourceFilePath = result.sourceFilePath || selectedBItem.sourceFilePath || ''
+      const sourceKind = getAnnotationSourceKind(result.data, sourceFilePath)
+      const media = result.media || result.image || null
+      const annotationPreviews = {}
+      const activeFrameKeys = new Set()
+      const previewTargets = new Map()
+
+      if (sourceKind === 'video') {
+        const entityAnnotationIds = new Set(
+          getEntityAObjectRefs(entity).map((ref) => ref.aObjectId),
+        )
+        annotations.forEach((annotation) => {
+          if (!entityAnnotationIds.has(annotation.id)) return
+          const resolvedFrame = resolveAnnotationFrameTime(annotation, result.data?.frames || [])
+          if (resolvedFrame.time === null) {
+            annotationPreviews[annotation.id] = {
+              ok: false,
+              reason: 'frame-time-unavailable',
+              status: 'error',
+            }
+            return
+          }
+
+          const frameKey = getVideoFramePreviewKey({
+            media,
+            resolvedFrame,
+          })
+          activeFrameKeys.add(frameKey)
+          const cached = videoFramePreviewCache.get(frameKey)
+          if (cached?.ok) {
+            annotationPreviews[annotation.id] = {
+              frameId: resolvedFrame.frame?.id || annotation.frameId || '',
+              imageSize: cached.imageSize,
+              imageUrl: cached.previewUrl,
+              ok: true,
+              status: 'ready',
+            }
+            return
+          }
+
+          annotationPreviews[annotation.id] = {
+            frameId: resolvedFrame.frame?.id || annotation.frameId || '',
+            status: 'loading',
+          }
+          const target = previewTargets.get(frameKey) || {
+            annotationIds: [],
+            frameKey,
+            src: media?.fileUrl || '',
+            time: resolvedFrame.time,
+          }
+          target.annotationIds.push(annotation.id)
+          previewTargets.set(frameKey, target)
+        })
+      }
+
+      videoFramePreviewCache.setActiveKeys(activeFrameKeys)
       setExpandedBSourcePreview({
         key: expandedBSourceKey,
         status: 'ready',
-        ok: Boolean(entity),
-        annotations: result.data?.annotations || [],
+        ok: true,
+        annotations,
+        annotationPreviews,
         entity,
-        imageSize: result.image?.width && result.image?.height
-          ? { width: result.image.width, height: result.image.height }
+        imageSize: sourceKind === 'image' && media?.width && media?.height
+          ? { width: media.width, height: media.height }
           : null,
-        imageUrl: result.image?.fileUrl || '',
-        reason: entity ? '' : 'entity-not-found',
+        imageUrl: sourceKind === 'image' ? media?.fileUrl || '' : '',
+        reason: '',
+        sourceKind,
+      })
+
+      previewTargets.forEach((target) => {
+        videoFramePreviewCache.request({
+          key: target.frameKey,
+          src: target.src,
+          time: target.time,
+        }).then((snapshot) => {
+          if (canceled || requestId !== bSourcePreviewRequestIdRef.current) return
+          setExpandedBSourcePreview((current) => {
+            if (current.key !== expandedBSourceKey) return current
+            const nextPreviews = { ...(current.annotationPreviews || {}) }
+            target.annotationIds.forEach((annotationId) => {
+              nextPreviews[annotationId] = snapshot?.ok
+                ? {
+                    ...nextPreviews[annotationId],
+                    imageSize: snapshot.imageSize,
+                    imageUrl: snapshot.previewUrl,
+                    ok: true,
+                    status: 'ready',
+                  }
+                : {
+                    ...nextPreviews[annotationId],
+                    ok: false,
+                    reason: snapshot?.reason || 'video-frame-snapshot-failed',
+                    status: 'error',
+                  }
+            })
+            return {
+              ...current,
+              annotationPreviews: nextPreviews,
+            }
+          })
+        })
       })
     }
     loadBSourcePreview()
     return () => {
       canceled = true
     }
-  }, [expandedBSourceKey, expandedBSourcePreview.key, selectedBSourceItem])
+  }, [
+    expandedBSourceKey,
+    selectedBSourceItem,
+    videoFramePreviewCache,
+  ])
 
   const startColumnResize = (column, event) => {
     event.preventDefault()
@@ -522,7 +660,14 @@ export default function CompositeEditor({
                       </button>
                     </div>
                     <div title={item.dataFilePath}>
-                      <strong>{item.subject} / {item.kind}</strong>
+                      <strong>
+                        <EntitySourceKindIcon
+                          dataFilePath={item.dataFilePath}
+                          sourceFilePath={item.sourceFilePath}
+                          sourceKind={item.sourceKind}
+                        />
+                        {item.subject} / {item.kind}
+                      </strong>
                       <small>{item.label} / {item.aObjectCount} A / {item.ruleOk ? 'Rule OK' : 'Rule issue'}</small>
                     </div>
                   </div>
@@ -534,6 +679,7 @@ export default function CompositeEditor({
                         <EntityRawPreview
                           annotations={currentExpandedBSourcePreview.annotations}
                           entity={currentExpandedBSourcePreview.entity}
+                          getAnnotationPreview={getBSourceAnnotationPreview}
                           imageSize={currentExpandedBSourcePreview.imageSize}
                           imageUrl={currentExpandedBSourcePreview.imageUrl}
                           readOnly

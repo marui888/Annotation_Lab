@@ -2,9 +2,12 @@ import { createAnnotationExportTask } from '../ab-editor/exportCropRect'
 import { getEntityAObjectRefs } from '../domain/domainSchemas'
 import { normalizeCDocument } from '../domain/cDocument'
 import { captureVideoFrameSnapshot } from '../media/videoFrameSnapshot'
+import {
+  getAnnotationSourceKind,
+  resolveAnnotationFrameTime,
+} from '../media/annotationFrameTime'
 
 const MAX_C_REF_EXPORT_DEPTH = 3
-const VIDEO_FILE_PATTERN = /\.(mp4|webm|mov|m4v|mkv)$/i
 
 function findItemWithPath(items, itemId, parentPath = []) {
   for (let index = 0; index < items.length; index += 1) {
@@ -15,18 +18,6 @@ function findItemWithPath(items, itemId, parentPath = []) {
     if (childResult) return childResult
   }
   return null
-}
-
-function getAnnotationTime(annotation, annotationData) {
-  const frame = (annotationData.frames || []).find((item) => item.id === annotation.frameId)
-  const time = Number(annotation.timeStamp ?? frame?.timeStamp ?? frame?.locator?.time)
-  return Number.isFinite(time) ? time : null
-}
-
-function getSourceKind(annotationData, sourceFilePath) {
-  const declaredKind = annotationData.sources?.[0]?.kind
-  if (declaredKind === 'video' || VIDEO_FILE_PATTERN.test(sourceFilePath || '')) return 'video'
-  return 'image'
 }
 
 function createTaskAppender(tasks) {
@@ -128,7 +119,7 @@ export async function prepareCompositeExport({
     }
 
     const sourceFilePath = loadResult.sourceFilePath || item.ref?.sourceFilePath || ''
-    const sourceKind = getSourceKind(annotationData, sourceFilePath)
+    const sourceKind = getAnnotationSourceKind(annotationData, sourceFilePath)
     const annotations = annotationData.annotations || []
 
     for (let refIndex = 0; refIndex < refs.length; refIndex += 1) {
@@ -159,7 +150,7 @@ export async function prepareCompositeExport({
       let sourceFrameId = ''
 
       if (sourceKind === 'video' && annotation.type !== 'text') {
-        const time = getAnnotationTime(annotation, annotationData)
+        const time = resolveAnnotationFrameTime(annotation, annotationData.frames || []).time
         if (time === null) {
           appendTask({ ...common, kind: 'error', annotationType: annotation.type, reason: 'video-frame-time-unavailable' })
           continue

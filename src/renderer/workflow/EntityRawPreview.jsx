@@ -31,6 +31,7 @@ export default function EntityRawPreview({
       imageUrl: annotationPreview?.imageUrl || imageUrl,
       node,
       previewReason: annotationPreview?.reason || '',
+      previewStatus: annotationPreview?.status || '',
     }
   }), [annotations, flatCards, getAnnotationPreview, imageSize, imageUrl])
   const sharedScale = useSharedScale
@@ -70,7 +71,11 @@ export default function EntityRawPreview({
               imageSize={previewEntry?.imageSize}
               index={flatCards.findIndex((card) => card.id === node.id)}
               layoutScale={sharedScale}
-              missingPreviewText={previewEntry?.previewReason ? `Frame preview failed: ${previewEntry.previewReason}` : undefined}
+              missingPreviewText={previewEntry?.previewStatus === 'loading'
+                ? 'Building frame preview...'
+                : previewEntry?.previewReason
+                  ? `Frame preview failed: ${previewEntry.previewReason}`
+                  : undefined}
               previewBackgroundColor={previewBackgroundColor}
               showAnnotationFrame={showAnnotationFrame}
               showInfo={false}

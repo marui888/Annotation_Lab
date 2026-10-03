@@ -5,6 +5,7 @@ import {
   createSameNamePath,
   getReferenceTypeLabel,
 } from './cReferenceUtils'
+import EntitySourceKindIcon from '../../components/EntitySourceKindIcon'
 import {
   buildValidatedRepairRows,
   createPrefixReplaceGetter,
@@ -289,7 +290,10 @@ export default function CReferenceRepairDialog({
             return (
               <div className="repair-row" key={reference.id}>
                 <span title={reference.documentPath || 'Current document'}>{reference.documentPath ? 'Referenced' : 'Current'}</span>
-                <span>{reference.typeLabel}</span>
+                <span>
+                  {reference.type === 'b-ref' ? <EntitySourceKindIcon dataFilePath={reference.path} /> : null}
+                  {reference.typeLabel}
+                </span>
                 <span title={reference.path}>{reference.path}</span>
                 <input
                   onChange={async (event) => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ABEditor from './renderer/ab-editor/ABEditor'
 import AppTooltip from './renderer/components/AppTooltip'
+import EntitySourceKindIcon from './renderer/components/EntitySourceKindIcon'
 import CompositeEditor from './renderer/c-editor/CompositeEditor'
 import { prepareCompositeExport } from './renderer/c-editor/compositeExport'
 import {
@@ -4048,7 +4049,13 @@ function App() {
           <div className="section-title">B Entities</div>
           <div className="inspector-status-row">
             <span>Total: <strong>{entities.length}</strong></span>
-            <span>Selected Entity: <strong title={selectedEntityForInspector?.id || ''}>{selectedEntityForInspector?.label || '--'}</strong></span>
+            <span>
+              Selected Entity:{' '}
+              <strong title={selectedEntityForInspector?.id || ''}>
+                {selectedEntityForInspector ? <EntitySourceKindIcon sourceKind={source?.kind} /> : null}
+                {selectedEntityForInspector?.label || '--'}
+              </strong>
+            </span>
             <span>Selected A: <strong>{selectedAnnotationIds.length}</strong></span>
             <button disabled={entities.length === 0} onClick={expandAllInspectorEntities} type="button">Expand All</button>
             <button disabled={entities.length === 0} onClick={collapseAllInspectorEntities} type="button">Collapse All</button>
@@ -4097,7 +4104,10 @@ function App() {
                           <i className={expanded ? 'fa-solid fa-caret-down' : 'fa-solid fa-caret-right'} />
                         </button>
                         <div className="entity-row-summary">
-                          <span>{index + 1}. {getSubjectLabel(entity.subject)} / {getKindLabel(entity.subject, entity.kind)} / {entity.label}</span>
+                          <span>
+                            {index + 1}. <EntitySourceKindIcon sourceKind={source?.kind} />
+                            {getSubjectLabel(entity.subject)} / {getKindLabel(entity.subject, entity.kind)} / {entity.label}
+                          </span>
                           <small>{aObjectRefs.length} A / {validation.ok ? 'OK' : validation.issues.join('; ')}</small>
                         </div>
                       </div>
@@ -4451,7 +4461,12 @@ function App() {
               displayMessage={message}
               entities={entities}
               editingTextAnnotation={editingTextAnnotation}
-              formatEntityLabel={(entity) => `${getKindLabel(entity.subject, entity.kind)}: ${entity.label}`}
+              formatEntityLabel={(entity) => (
+                <>
+                  <EntitySourceKindIcon sourceKind={source?.kind} />
+                  {getKindLabel(entity.subject, entity.kind)}: {entity.label}
+                </>
+              )}
               frame={frame}
               framePreviewUrl={framePreviewUrl}
               ensureAnnotationPreview={ensureAnnotationPreview}
@@ -4646,7 +4661,14 @@ function App() {
                 <div className="dialog-title">Add To Entity</div>
                 <dl className="dialog-info">
                   <dt>Entity</dt>
-                  <dd>{entity ? `${getKindLabel(entity.subject, entity.kind)}: ${entity.label}` : '--'}</dd>
+                  <dd>
+                    {entity ? (
+                      <>
+                        <EntitySourceKindIcon sourceKind={source?.kind} />
+                        {getKindLabel(entity.subject, entity.kind)}: {entity.label}
+                      </>
+                    ) : '--'}
+                  </dd>
                   <dt>A Objects</dt>
                   <dd>{addToEntityDialog.annotationIds.length}</dd>
                 </dl>
@@ -4978,6 +5000,7 @@ function App() {
         <div className="dialog-layer">
           <div className="entity-dialog">
             <div className="dialog-title">
+              <EntitySourceKindIcon sourceKind={source?.kind} />
               {entityDialog.sourceAObjectIds?.length ? 'New Entity From A Objects' : 'New Entity'}
             </div>
             <label>

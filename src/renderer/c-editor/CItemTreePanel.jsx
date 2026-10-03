@@ -9,12 +9,22 @@ import {
   promoteNode,
 } from '../components/tree-list/treeOperations'
 import { getCItemSummary, getCItemTypeLabel } from './cEditorUtils'
+import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
 
 function CItemTreeNode({ node, context }) {
   return (
     <div className="c-item-tree-node">
       <div>
-        <strong>{getCItemTypeLabel(node)}</strong>
+        <strong>
+          {node.type === 'b-ref' ? (
+            <EntitySourceKindIcon
+              dataFilePath={node.ref?.dataFilePath}
+              sourceFilePath={node.ref?.sourceFilePath}
+              sourceKind={node.snapshot?.sourceKind}
+            />
+          ) : null}
+          {getCItemTypeLabel(node)}
+        </strong>
         <span title={getCItemSummary(node)}>{getCItemSummary(node)}</span>
       </div>
       <small>Level {context.depth + 1}</small>

@@ -3,6 +3,8 @@ import { normalizeCDocument } from '../domain/cDocument'
 import EntityListPreview from '../workflow/EntityListPreview'
 import CompositeListPreview from './CompositeListPreview'
 import { getCItemSummary, getTextPreviewInfo, TEXT_PREVIEW_LIMIT } from './cEditorUtils'
+import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
+import { resolveEntitySourceKind } from '../domain/entitySourceKind'
 
 function toLabFileUrl(filePath) {
   return `lab-file://local/${encodeURIComponent(filePath)}`
@@ -28,6 +30,11 @@ function createEntityPreviewData(result, entityId) {
       : null,
     imageUrl: result.image?.fileUrl || '',
     reason: entity ? '' : 'entity-not-found',
+    sourceKind: resolveEntitySourceKind(
+      result.data?.sources?.[0]?.kind,
+      result.sourceFilePath,
+      result.annotationFilePath,
+    ),
   }
 }
 
@@ -35,10 +42,26 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
-function DetailHeader({ title, onOpen }) {
+function DetailHeader({
+  dataFilePath = '',
+  onOpen,
+  showEntitySource = false,
+  sourceFilePath = '',
+  sourceKind = '',
+  title,
+}) {
   return (
     <div className="c-selected-detail-header">
-      <div className="section-title">{title}</div>
+      <div className="section-title">
+        {showEntitySource ? (
+          <EntitySourceKindIcon
+            dataFilePath={dataFilePath}
+            sourceFilePath={sourceFilePath}
+            sourceKind={sourceKind}
+          />
+        ) : null}
+        {title}
+      </div>
       {onOpen ? (
         <button
           aria-label="Open"
@@ -347,7 +370,14 @@ export default function CSelectedDetailPanel({
   if (selectedCItem?.type === 'b-ref') {
     return (
       <>
-        <DetailHeader title="Selected B Ref" onOpen={openSelectedEntity} />
+        <DetailHeader
+          dataFilePath={selectedCItem.ref.dataFilePath}
+          onOpen={openSelectedEntity}
+          showEntitySource
+          sourceFilePath={selectedCItem.ref.sourceFilePath}
+          sourceKind={detailState.sourceKind || selectedCItem.snapshot?.sourceKind}
+          title="Selected B Ref"
+        />
         <EntityDetail
           activeView={entityDetailView}
           data={detailState}

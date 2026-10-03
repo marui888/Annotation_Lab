@@ -32,6 +32,7 @@ function getCItemSearchText(item) {
     item.snapshot?.subject,
     item.snapshot?.kind,
     item.snapshot?.label,
+    item.snapshot?.sourceKind,
   ].filter(Boolean).join(' ').toLowerCase()
 }
 

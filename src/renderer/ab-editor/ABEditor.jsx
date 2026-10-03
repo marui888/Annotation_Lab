@@ -12,6 +12,7 @@ import VideoPlayer from '../video/VideoPlayer'
 import { runAction } from '../actions/actionRegistry'
 import APreviewCard from './APreviewCard'
 import { loadEditorSessionFromInput } from './abEditorLoader'
+import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
 
 const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
 const VIDEO_CONTROL_ROW_HEIGHT = 38
@@ -1120,6 +1121,7 @@ export default function ABEditor({
           onGoToAnnotation={onGoToAnnotation}
           selectedAnnotationIds={selectedAnnotationIds}
           selectedEntity={selectedEntity}
+          sourceKind={source?.kind}
           subjectSchemas={subjectSchemas}
           onCreateEntity={onCreateEntity}
           onBottomPanelHeightChange={(nextHeight) => {
@@ -1197,7 +1199,11 @@ export default function ABEditor({
         <span>Fit: <strong>contain</strong></span>
         <span>Zoom: <strong>{zoomMode === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</strong></span>
         <span>Input: <strong>{displayInput?.kind || '--'}</strong></span>
-        <span>Entity: <strong title={displayInput?.entityId || ''}>{displayInput?.entityId || '--'}</strong></span>
+        <span>
+          Entity:{' '}
+          {displayInput?.entityId ? <EntitySourceKindIcon sourceKind={source?.kind} /> : null}
+          <strong title={displayInput?.entityId || ''}>{displayInput?.entityId || '--'}</strong>
+        </span>
         <span>
           JSON:{' '}
           <strong

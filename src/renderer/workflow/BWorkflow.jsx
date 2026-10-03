@@ -17,6 +17,7 @@ import {
   updateAllACardRoles,
 } from '../domain/aCardTree'
 import PreviewControlOverlay from '../components/preview/PreviewControlOverlay'
+import EntitySourceKindIcon from '../components/EntitySourceKindIcon'
 import {
   DOMAIN_SCHEMAS,
   getDomainDefaultSubKind,
@@ -76,6 +77,7 @@ export default function BWorkflow({
   onGoToAnnotation,
   selectedAnnotationIds,
   selectedEntity,
+  sourceKind,
   onCreateEntity,
   onSelectAnnotations,
   onUpdateEntity,
@@ -477,6 +479,9 @@ export default function BWorkflow({
     ].filter(Boolean).join(' ')}>
       <span>Total: {flatCards.length}</span>
       <span>Selected: {activeSelectedCardIds.length}</span>
+      {selectedEntity ? (
+        <span>Source: <EntitySourceKindIcon sourceKind={sourceKind} /></span>
+      ) : null}
       <strong>{validation ? `Rule: ${validation.ok ? 'OK' : validation.issues.join('; ')}` : 'No Entity'}</strong>
     </div>
   )
