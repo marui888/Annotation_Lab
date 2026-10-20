@@ -146,6 +146,11 @@
   font-size: 11px;
 }
 
+.entity-list-node-button .entity-list-node-comment {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .entity-list-node-button small {
   grid-column: 1 / -1;
   color: #666;

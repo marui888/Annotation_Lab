@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ABEditor from './renderer/ab-editor/ABEditor'
+import AObjectProperties from './renderer/components/AObjectProperties'
+import AObjectSplit from './renderer/components/AObjectSplit'
+import { createCardsFromAnnotations } from './renderer/domain/aObjectDefaults.js'
+import { normalizeAObjectProperties } from './shared/aObjectProperties.js'
 import AppTooltip from './renderer/components/AppTooltip'
 import EntitySourceKindIcon from './renderer/components/EntitySourceKindIcon'
 import CompositeEditor from './renderer/c-editor/CompositeEditor'
@@ -18,14 +22,15 @@ import {
 import { createAnnotationExportTask } from './renderer/ab-editor/exportCropRect'
 import { registerActions, runAction, subscribeActions } from './renderer/actions/actionRegistry'
 import { createId } from './renderer/core/id'
-import { createVideoFrame } from './renderer/media/videoAdapter'
-import { createPdfPageFrame, getPdfFramePage } from './renderer/media/pdfAdapter'
+import { mediaLocationKey, resolveMediaTarget } from './shared/mediaLocation.js'
+import { ANNOTATION_SCHEMA_VERSION } from './shared/annotationDocument.js'
+import { createVideoLocator, getVideoStart, normalizeVideoLocator, relocateVideoLocator } from './shared/videoLocator.js'
 import {
   appendRefsToACardTree,
+  cloneACardTree,
   createACardPatch,
   flattenACardTree,
   getEntityACardTree,
-  refsToACardTree,
   removeACardsByAObjectIds,
   updateACardRolesByAObjectId,
 } from './renderer/domain/aCardTree'
@@ -123,9 +128,8 @@ const LEFT_TABS = [
 
 const AB_INSPECTOR_TABS = [
   { id: 'source', icon: 'fa-solid fa-file-image', label: 'Source' },
-  { id: 'frame', icon: 'fa-solid fa-film', label: 'Frames' },
-  { id: 'a', icon: 'fa-solid fa-vector-square', label: 'A Objects' },
-  { id: 'b', icon: 'fa-solid fa-layer-group', label: 'B Entities' },
+  { id: 'a', icon: 'fa-solid fa-a', label: 'A Objects' },
+  { id: 'b', icon: 'fa-solid fa-b', label: 'B Entities' },
   { id: 'simpleNotes', icon: 'fa-solid fa-note-sticky', label: 'SimpleNotes' },
 ]
 
@@ -271,11 +275,10 @@ const createEmptyEditorSession = (overrides = {}) => ({
   title: 'Empty',
   input: null,
   source: null,
-  frame: null,
-  frames: [],
-  framePreviewUrl: '',
-  framePreviewCache: {},
-  selectedFrameId: null,
+  currentLocator: null,
+  pdfPageInfo: {},
+  sourcePreviewUrl: '',
+  mediaPreviewCache: {},
   message: '',
   imageSize: null,
   zoomMode: 'fit',
@@ -405,108 +408,6 @@ function getUnsavedAppWorkspaceItems(closeData = {}) {
   return [...abItems, ...cItems]
 }
 
-function getFrameTimeStamp(targetFrame) {
-  const time = Number(targetFrame?.timeStamp ?? targetFrame?.locator?.time)
-  return Number.isFinite(time) ? time : null
-}
-
-function normalizeFrameTimeStamps(sourceKind, frameItems = []) {
-  return frameItems.map((frameItem) => {
-    if (sourceKind === 'video' || frameItem.kind === 'video-frame') {
-      const timeStamp = getFrameTimeStamp(frameItem) ?? 0
-      return {
-        ...frameItem,
-        timeStamp,
-        locator: {
-          ...frameItem.locator,
-          time: timeStamp,
-        },
-      }
-    }
-    if (sourceKind === 'pdf' || frameItem.kind === 'pdf-page') {
-      const pdfFrame = { ...frameItem }
-      delete pdfFrame.timeStamp
-      return pdfFrame
-    }
-    return {
-      ...frameItem,
-      timeStamp: null,
-    }
-  })
-}
-
-function findFrameByTimeStamp(frameItems = [], timeStamp, toleranceSeconds = DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds) {
-  const targetTime = Number(timeStamp)
-  const tolerance = Number(toleranceSeconds)
-  if (!Number.isFinite(targetTime)) return null
-  return frameItems.find((frameItem) => {
-    const frameTime = getFrameTimeStamp(frameItem)
-    return Number.isFinite(frameTime) && Math.abs(frameTime - targetTime) <= Math.max(0, tolerance)
-  }) || null
-}
-
-function normalizeAnnotationTimeStamps(sourceKind, annotationItems = [], frameItems = []) {
-  const normalizedFrames = normalizeFrameTimeStamps(sourceKind, frameItems)
-  const frameMap = new Map(normalizedFrames.map((item) => [item.id, item]))
-  return annotationItems.map((annotation) => {
-    if (annotation.timeStamp !== undefined) return annotation
-    if (sourceKind !== 'video') {
-      return {
-        ...annotation,
-        timeStamp: null,
-      }
-    }
-    return {
-      ...annotation,
-      timeStamp: getFrameTimeStamp(frameMap.get(annotation.frameId)),
-    }
-  })
-}
-
-function ensureFramesForAnnotationTimeStamps(source, frameItems = [], annotationItems = [], toleranceSeconds = DEFAULT_APP_SETTINGS.frameTimestampToleranceSeconds) {
-  const normalizedFrameItems = normalizeFrameTimeStamps(source?.kind, frameItems)
-  if (source?.kind !== 'video') {
-    return {
-      frames: normalizedFrameItems,
-      annotations: annotationItems,
-    }
-  }
-
-  const frameMap = new Map(normalizedFrameItems.map((item) => [item.id, item]))
-  const nextFrames = [...normalizedFrameItems]
-  const nextAnnotations = annotationItems.map((annotation) => {
-    const timeStamp = Number(annotation.timeStamp)
-    if (!Number.isFinite(timeStamp)) return annotation
-
-    const existingFrame = findFrameByTimeStamp(nextFrames, timeStamp, toleranceSeconds)
-    const frameId = existingFrame?.id || annotation.frameId || createId('frame')
-    if (!frameMap.has(frameId)) {
-      const nextFrame = createVideoFrame(source, {
-        id: frameId,
-        timeStamp,
-        width: source.meta?.width ?? null,
-        height: source.meta?.height ?? null,
-        duration: source.meta?.duration ?? null,
-        createdAt: annotation.createdAt,
-      })
-      frameMap.set(nextFrame.id, nextFrame)
-      nextFrames.push(nextFrame)
-    }
-
-    return annotation.frameId === frameId
-      ? annotation
-      : {
-          ...annotation,
-          frameId,
-        }
-  })
-
-  return {
-    frames: nextFrames,
-    annotations: nextAnnotations,
-  }
-}
-
 function stripEntityFrameFields(entity = {}) {
   const {
     frame,
@@ -529,19 +430,20 @@ function sanitizeEntityForPersistence(entity = {}) {
 }
 
 function App() {
-  const pendingPreviewFrameIdsRef = useRef(new Set())
+  const pendingPreviewKeysRef = useRef(new Set())
   const actionHandlersRef = useRef({})
   const appSettingsRef = useRef(DEFAULT_APP_SETTINGS)
   const appCloseDataRef = useRef({ abSessions: [], cWorkspaces: {} })
   const simpleNoteListRef = useRef(null)
+  const aObjectPropertiesRef = useRef(null)
+  const [aObjectSplitRatio, setAObjectSplitRatio] = useState(0.5)
   const [source, setSource] = useState(null)
-  const [frame, setFrame] = useState(null)
-  const [frames, setFrames] = useState([])
+  const [currentLocator, setCurrentLocator] = useState(null)
+  const [pdfPageInfo, setPdfPageInfo] = useState({})
   const [message, setMessage] = useState('')
   const [imageSize, setImageSize] = useState(null)
-  const [framePreviewUrl, setFramePreviewUrl] = useState('')
-  const [framePreviewCache, setFramePreviewCache] = useState({})
-  const [selectedFrameId, setSelectedFrameId] = useState(null)
+  const [sourcePreviewUrl, setSourcePreviewUrl] = useState('')
+  const [mediaPreviewCache, setMediaPreviewCache] = useState({})
   const [zoomMode, setZoomMode] = useState('fit')
   const [zoom, setZoom] = useState(1)
   const [pdfPage, setPdfPage] = useState(1)
@@ -590,7 +492,6 @@ function App() {
   const [entities, setEntities] = useState([])
   const [entityMenu, setEntityMenu] = useState(null)
   const [aObjectMenu, setAObjectMenu] = useState(null)
-  const [frameMenu, setFrameMenu] = useState(null)
   const [simpleNoteMenu, setSimpleNoteMenu] = useState(null)
   const [expandedAObjectId, setExpandedAObjectId] = useState(null)
   const [expandedInspectorEntityIds, setExpandedInspectorEntityIds] = useState([])
@@ -609,9 +510,9 @@ function App() {
   const [activeWorkspaceTabId, setActiveWorkspaceTabId] = useState(() => INITIAL_EDITOR_WORKSPACE.activeId)
   const [compositeRepairRequestId, setCompositeRepairRequestId] = useState(0)
   const [playPauseRequestId, setPlayPauseRequestId] = useState(0)
-  const [bindFrameRequest, setBindFrameRequest] = useState(null)
-  const [pendingBindFrame, setPendingBindFrame] = useState(null)
-  const [bindFrameDialogPosition, setBindFrameDialogPosition] = useState(null)
+  const [videoTimeRequest, setVideoTimeRequest] = useState(null)
+  const [pendingVideoTime, setPendingVideoTime] = useState(null)
+  const [videoTimeDialogPosition, setVideoTimeDialogPosition] = useState(null)
   const [appSettings, setAppSettings] = useState(DEFAULT_APP_SETTINGS)
   const [cPreviewResources] = useState(() => ({
     annotationFiles: createAnnotationFilePreviewCache(),
@@ -622,7 +523,7 @@ function App() {
   const [deleteUndoStacks, setDeleteUndoStacks] = useState({})
   const [registeredActions, setRegisteredActions] = useState([])
   const [pendingShortcutCapture, setPendingShortcutCapture] = useState(null)
-  const [bindFrameDialogDrag, setBindFrameDialogDrag] = useState(null)
+  const [videoTimeDialogDrag, setVideoTimeDialogDrag] = useState(null)
   const [videoSeekRequest, setVideoSeekRequest] = useState(null)
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH)
   const [lastLeftPanelWidth, setLastLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH)
@@ -663,11 +564,6 @@ function App() {
     if (!subKindValue) return '--'
     const schema = getDomainSchema(subjectId, subjectSchemas)
     return getDomainSubKind(schema, kindValue, subKindValue)?.label || subKindValue
-  }
-
-  const getEntityDefaultRole = (entity) => {
-    const schema = getDomainSchema(entity.subject, subjectSchemas)
-    return getDomainRolesForKind(schema, entity.kind)[0]?.value || 'default'
   }
 
   const getEntityRuleText = (entity) => {
@@ -1126,18 +1022,18 @@ function App() {
   }, [workspaceTabMenu])
 
   useEffect(() => {
-    if (!bindFrameDialogDrag) return undefined
+    if (!videoTimeDialogDrag) return undefined
 
     const handleMouseMove = (event) => {
       const width = 430
       const height = 260
-      setBindFrameDialogPosition({
-        x: clamp(event.clientX - bindFrameDialogDrag.offsetX, 8, Math.max(8, window.innerWidth - width - 8)),
-        y: clamp(event.clientY - bindFrameDialogDrag.offsetY, 8, Math.max(8, window.innerHeight - height - 8)),
+      setVideoTimeDialogPosition({
+        x: clamp(event.clientX - videoTimeDialogDrag.offsetX, 8, Math.max(8, window.innerWidth - width - 8)),
+        y: clamp(event.clientY - videoTimeDialogDrag.offsetY, 8, Math.max(8, window.innerHeight - height - 8)),
       })
     }
 
-    const handleMouseUp = () => setBindFrameDialogDrag(null)
+    const handleMouseUp = () => setVideoTimeDialogDrag(null)
 
     document.body.classList.add('panel-resizing')
     window.addEventListener('mousemove', handleMouseMove)
@@ -1147,7 +1043,7 @@ function App() {
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [bindFrameDialogDrag])
+  }, [videoTimeDialogDrag])
 
   const startPanelResize = (panel, event) => {
     event.preventDefault()
@@ -1190,11 +1086,10 @@ function App() {
     title: source?.fileName || getInputTitle(currentABInput),
     input: currentABInput,
     source,
-    frame,
-    frames: normalizeFrameTimeStamps(source?.kind, frames),
-    framePreviewUrl,
-    framePreviewCache,
-    selectedFrameId,
+    currentLocator,
+    pdfPageInfo,
+    sourcePreviewUrl,
+    mediaPreviewCache,
     message,
     imageSize,
     zoomMode,
@@ -1252,16 +1147,16 @@ function App() {
   }, [cWorkspaces, editorWorkspace, saveStatus])
 
   const applyEditorSessionSnapshot = (session) => {
-    const sessionFrames = normalizeFrameTimeStamps(session.source?.kind, session.frames || [])
-    const sessionFrame = sessionFrames.find((item) => item.id === session.frame?.id) || sessionFrames[0] || null
-    const sessionAnnotations = normalizeAnnotationTimeStamps(session.source?.kind, session.annotations || [], sessionFrames)
+    const sessionAnnotations = session.annotations || []
     setMessage(session.message || '')
     setSource(session.source || null)
-    setFrame(sessionFrame)
-    setFrames(sessionFrames)
-    setFramePreviewUrl(session.framePreviewUrl || '')
-    setFramePreviewCache(session.framePreviewCache || {})
-    setSelectedFrameId(session.selectedFrameId || sessionFrame?.id || null)
+    setCurrentLocator(session.currentLocator || null)
+    setPdfPageInfo(session.pdfPageInfo || {})
+    setVideoTimeRequest(null)
+    setPendingVideoTime(null)
+    setVideoSeekRequest(null)
+    setSourcePreviewUrl(session.sourcePreviewUrl || '')
+    setMediaPreviewCache(session.mediaPreviewCache || {})
     setImageFolderPath(session.imageFolderPath || '')
     setImageFolderItems(session.imageFolderItems || [])
     setImageSize(session.imageSize || null)
@@ -1297,7 +1192,6 @@ function App() {
     setPendingEditorCloseSessionId(null)
     setEntityMenu(null)
     setAObjectMenu(null)
-    setFrameMenu(null)
     setSimpleNoteMenu(null)
     setEntityDialog(null)
     setAddToEntityDialog(null)
@@ -1317,18 +1211,10 @@ function App() {
             : annotation
         ))
       : (session.annotations || [])
-    const normalized = ensureFramesForAnnotationTimeStamps(
-      session.source,
-      session.frames || (session.frame ? [session.frame] : []),
-      rawSessionAnnotations,
-      appSettings.frameTimestampToleranceSeconds,
-    )
-
     return {
-      schemaVersion: 1,
+      schemaVersion: ANNOTATION_SCHEMA_VERSION,
       sources: session.source ? [session.source] : [],
-      frames: normalized.frames,
-      annotations: normalized.annotations,
+      annotations: rawSessionAnnotations,
       simpleNotes: normalizeSimpleNotes(session.simpleNotes || []),
       entities: (session.entities || []).map((entity) => sanitizeEntityForPersistence(entity)),
       collections: [],
@@ -1493,15 +1379,16 @@ function App() {
     const targetEntity = sessionEntities.find((entity) => entity.id === session.input?.entityId)
       || sessionEntities[0]
       || null
-    const sessionFrames = normalizeFrameTimeStamps(session.source?.kind, session.frames || (session.frame ? [session.frame] : []))
-    const sessionFrame = sessionFrames.find((item) => item.id === session.frame?.id) || sessionFrames[0] || null
-    const sessionAnnotations = normalizeAnnotationTimeStamps(session.source?.kind, session.annotations, sessionFrames)
+    const sessionAnnotations = session.annotations || []
     setMessage(session.warning || '')
     setSource(session.source)
-    setFrame(sessionFrame)
-    setFrames(sessionFrames)
-    setFramePreviewUrl(session.source?.kind === 'image' ? session.source.fileUrl : '')
-    setFramePreviewCache({})
+    setCurrentLocator(null)
+    setPdfPageInfo({})
+    setVideoTimeRequest(null)
+    setPendingVideoTime(null)
+    setVideoSeekRequest(null)
+    setSourcePreviewUrl(session.source?.kind === 'image' ? session.source.fileUrl : '')
+    setMediaPreviewCache({})
     setImageFolderPath(session.folderPath)
     setImageFolderItems(session.folderImages)
     setImageSize(null)
@@ -1511,7 +1398,6 @@ function App() {
     setPdfNavigationRequest(null)
     setPdfViewMode('single')
     setToolMode('select')
-    setSelectedFrameId(sessionFrame?.id || null)
     setSelectedAnnotationIds([])
     setSimpleNotes(normalizeSimpleNotes(session.simpleNotes || []))
     setSelectedSimpleNoteId(null)
@@ -1528,7 +1414,6 @@ function App() {
     setEditingTextId(null)
     setEntityMenu(null)
     setAObjectMenu(null)
-    setFrameMenu(null)
     setEntityDialog(null)
     setAddToEntityDialog(null)
     setSelectedEntityId(targetEntity?.id || null)
@@ -1746,7 +1631,6 @@ function App() {
     setVideoSeekRequest({
       id: createId('seek'),
       annotationId: null,
-      frameId: frame?.id || '',
       time,
     })
   }
@@ -1810,94 +1694,30 @@ function App() {
     setVideoSeekRequest({
       id: createId('seek'),
       annotationId: null,
-      frameId: frame?.id || '',
       time: Math.max(0, getCurrentVideoTime() + deltaSeconds),
     })
   }
 
-  const useVideoFrame = (nextFrame, videoSize = {}, previewUrl = '', options = {}) => {
-    if (!nextFrame) return
-    const frameTimeStamp = getFrameTimeStamp(nextFrame)
-    const width = videoSize.width || nextFrame.meta?.width || imageSize?.width || null
-    const height = videoSize.height || nextFrame.meta?.height || imageSize?.height || null
-    const existingFrame = source?.kind === 'video'
-      ? findFrameByTimeStamp(frames, frameTimeStamp, appSettings.frameTimestampToleranceSeconds)
-      : null
-    const targetFrame = existingFrame
-      ? {
-          ...existingFrame,
-          timeStamp: frameTimeStamp ?? getFrameTimeStamp(existingFrame),
-          locator: {
-            ...existingFrame.locator,
-            time: frameTimeStamp ?? getFrameTimeStamp(existingFrame) ?? 0,
-          },
-          meta: {
-            ...existingFrame.meta,
-            width: width ?? existingFrame.meta?.width ?? null,
-            height: height ?? existingFrame.meta?.height ?? null,
-            duration: nextFrame.meta?.duration ?? existingFrame.meta?.duration ?? null,
-          },
-          updatedAt: new Date().toISOString(),
-        }
-      : {
-          ...nextFrame,
-          timeStamp: source?.kind === 'video' ? frameTimeStamp ?? 0 : null,
-          locator: source?.kind === 'video'
-            ? {
-                ...nextFrame.locator,
-                time: frameTimeStamp ?? 0,
-              }
-            : nextFrame.locator || {},
-        }
-    setFrame(targetFrame)
-    setSelectedFrameId(targetFrame.id)
-    setFrames((current) => {
-      const normalizedCurrent = normalizeFrameTimeStamps(source?.kind, current)
-      const currentMatch = source?.kind === 'video'
-        ? findFrameByTimeStamp(normalizedCurrent, getFrameTimeStamp(targetFrame), appSettings.frameTimestampToleranceSeconds)
-        : null
-      const nextFrames = normalizedCurrent.some((item) => item.id === targetFrame.id || item.id === currentMatch?.id)
-        ? normalizedCurrent.map((item) => (item.id === targetFrame.id || item.id === currentMatch?.id ? targetFrame : item))
-        : [...normalizedCurrent, targetFrame]
-      return nextFrames
-    })
-    setFramePreviewUrl(previewUrl)
-    if (previewUrl && width && height) {
-      setFramePreviewCache((current) => ({
+  const useVideoPicture = (locator, videoSize = {}, previewUrl = '') => {
+    const start = getVideoStart(locator)
+    if (source?.kind !== 'video' || start === null) return
+    setCurrentLocator(normalizeVideoLocator({ start, end: locator.end }, source.meta?.duration))
+    if (videoSize.width && videoSize.height) setImageSize(videoSize)
+    if (previewUrl && videoSize.width && videoSize.height) {
+      const key = mediaLocationKey(source, locator)
+      setMediaPreviewCache((current) => ({
         ...current,
-        [targetFrame.id]: {
-          frameId: targetFrame.id,
-          ok: true,
-          imageUrl: previewUrl,
-          imageSize: {
-            width,
-            height,
-          },
-          updatedAt: new Date().toISOString(),
-        },
+        [key]: { ok: true, imageUrl: previewUrl, imageSize: videoSize },
       }))
     }
-    if (width && height) {
-      setImageSize({ width, height })
-    }
-    setSource((current) => {
-      if (!current || current.id !== nextFrame.sourceId) return current
-      return {
-        ...current,
-        meta: {
-          ...current.meta,
-          width: width ?? current.meta?.width ?? null,
-          height: height ?? current.meta?.height ?? null,
-          duration: targetFrame.meta?.duration ?? current.meta?.duration ?? null,
-        },
-        updatedAt: new Date().toISOString(),
-      }
-    })
-    setToolMode('select')
-    if (!options.previewOnly) {
-      setSaveStatus('Unsaved')
-      setMessage(`Using video frame at ${Number(targetFrame.locator?.time || 0).toFixed(2)}s.`)
-    }
+    setSource((current) => current ? {
+      ...current,
+      meta: {
+        ...current.meta,
+        width: videoSize.width || current.meta?.width || null,
+        height: videoSize.height || current.meta?.height || null,
+      },
+    } : current)
   }
 
   const openAnnotation = async () => {
@@ -1957,116 +1777,38 @@ function App() {
     openImageByPath(item?.filePath)
   }
 
-  const updatePdfDocumentInfo = ({ pageCount, pageLabels = [] }) => {
+  const updatePdfDocumentInfo = ({ pageCount }) => {
     if (source?.kind !== 'pdf') return
     const safePageCount = Math.max(1, Math.round(Number(pageCount) || 1))
-    const nextSource = {
-      ...source,
-      meta: {
-        ...source.meta,
-        pageCount: safePageCount,
-      },
-      updatedAt: new Date().toISOString(),
-    }
-    const frameByPage = new Map((frames || []).map((item) => [getPdfFramePage(item), item]))
-    const nextFrames = Array.from({ length: safePageCount }, (_value, index) => {
-      const page = index + 1
-      const existingFrame = frameByPage.get(page)
-      return createPdfPageFrame(nextSource, {
-        ...(existingFrame?.meta || {}),
-        ...existingFrame,
-        physicalPage: page,
-        bookPageLabel: pageLabels[page - 1] ?? existingFrame?.meta?.bookPageLabel ?? null,
-      })
-    })
-    const nextPage = clamp(pdfPage, 1, safePageCount)
-    const nextFrame = nextFrames[nextPage - 1]
-    setSource(nextSource)
-    setFrames(nextFrames)
-    setPdfPage(nextPage)
-    setFrame(nextFrame)
-    setSelectedFrameId(nextFrame.id)
-    setFramePreviewUrl(framePreviewCache[nextFrame.id]?.imageUrl || '')
+    setSource((current) => ({ ...current, meta: { ...current.meta, pageCount: safePageCount } }))
+    setPdfPage((current) => clamp(current, 1, safePageCount))
   }
 
   const updatePdfPageInfo = ({ page, width, height, rotation = 0, bookPageLabel = null }) => {
     if (source?.kind !== 'pdf') return
-    const pageNumber = Math.max(1, Math.round(Number(page) || 1))
-    setFrames((current) => {
-      const hasPage = current.some((item) => getPdfFramePage(item) === pageNumber)
-      if (!hasPage) {
-        return [...current, createPdfPageFrame(source, {
-          physicalPage: pageNumber,
-          width,
-          height,
-          rotation,
-          bookPageLabel,
-        })]
-      }
-      return current.map((item) => {
-        if (getPdfFramePage(item) !== pageNumber) return item
-        if (
-          item.meta?.width === width
-          && item.meta?.height === height
-          && item.meta?.rotation === rotation
-          && item.meta?.bookPageLabel === bookPageLabel
-        ) return item
-        return {
-          ...item,
-          meta: {
-            ...item.meta,
-            width,
-            height,
-            rotation,
-            bookPageLabel,
-          },
-          updatedAt: new Date().toISOString(),
-        }
-      })
+    setPdfPageInfo((current) => {
+      const old = current[page]
+      if (old?.width === width && old?.height === height
+        && old?.rotation === rotation && old?.bookPageLabel === bookPageLabel) return current
+      return { ...current, [page]: { width, height, rotation, bookPageLabel } }
     })
-    if (pageNumber === pdfPage) {
-      setImageSize({ width, height })
-      setFrame((current) => current ? {
-        ...current,
-        meta: {
-          ...current.meta,
-          width,
-          height,
-          rotation,
-          bookPageLabel,
-        },
-      } : current)
-    }
+    if (page === pdfPage) setImageSize({ width, height })
   }
 
   const changePdfPage = (page) => {
     if (source?.kind !== 'pdf') return
-    const pageCount = Math.max(1, Number(source.meta?.pageCount) || frames.length || 1)
-    const nextPage = clamp(Math.round(Number(page) || 1), 1, pageCount)
-    const nextFrame = frames.find((item) => getPdfFramePage(item) === nextPage)
-      || createPdfPageFrame(source, { physicalPage: nextPage })
+    const nextPage = clamp(Math.round(Number(page) || 1), 1, Math.max(1, source.meta?.pageCount || 1))
     setPdfPage(nextPage)
-    setFrame(nextFrame)
-    setSelectedFrameId(nextFrame.id)
-    setImageSize(nextFrame.meta?.width && nextFrame.meta?.height
-      ? { width: nextFrame.meta.width, height: nextFrame.meta.height }
-      : null)
+    const info = pdfPageInfo[nextPage]
+    setImageSize(info?.width && info?.height ? { width: info.width, height: info.height } : null)
   }
 
   const usePdfPageSnapshot = ({ page, dataUrl, width, height }) => {
     if (source?.kind !== 'pdf' || !dataUrl || !width || !height) return
-    const targetFrame = frames.find((item) => getPdfFramePage(item) === page)
-      || (getPdfFramePage(frame) === page ? frame : null)
-    if (!targetFrame) return
-    const preview = {
-      frameId: targetFrame.id,
-      ok: true,
-      imageUrl: dataUrl,
-      imageSize: { width, height },
-      updatedAt: new Date().toISOString(),
-    }
-    setFramePreviewCache((current) => ({ ...current, [targetFrame.id]: preview }))
-    if (getPdfFramePage(frame) === page) setFramePreviewUrl(dataUrl)
+    const key = mediaLocationKey(source, { physicalPage: page })
+    setMediaPreviewCache((current) => ({
+      ...current, [key]: { ok: true, imageUrl: dataUrl, imageSize: { width, height } },
+    }))
   }
 
   const changeActiveToolMode = (nextMode) => {
@@ -2120,26 +1862,18 @@ function App() {
     setZoom(Math.max(0.1, Math.min(6, Number(numericZoom.toFixed(2)))))
   }
 
-  const normalizeNewAnnotation = (annotation) => {
-    const timeStamp = source?.kind === 'video' && frame?.kind === 'video-frame'
-      ? getFrameTimeStamp(frame)
-      : null
-    if (
-      ((source?.kind === 'video' && frame?.kind === 'video-frame')
-        || (source?.kind === 'pdf' && frame?.kind === 'pdf-page'))
-      && !annotation.frameId
-    ) {
-      return {
-        ...annotation,
-        frameId: frame.id,
-        timeStamp,
-      }
-    }
-    return {
-      ...annotation,
-      timeStamp,
-    }
-  }
+  const normalizeNewAnnotation = (annotation) => ({
+    ...annotation,
+    ...normalizeAObjectProperties(annotation),
+    sourceId: source.id,
+    locator: source.kind === 'pdf'
+      ? { ...annotation.locator,
+          bookPageLabel: pdfPageInfo[annotation.locator?.physicalPage]?.bookPageLabel
+            ?? annotation.locator?.bookPageLabel ?? null }
+      : source.kind === 'video'
+        ? normalizeVideoLocator(annotation.locator, source.meta?.duration)
+        : { ...annotation.locator },
+  })
 
   const addAnnotation = (annotation) => {
     const nextAnnotation = normalizeNewAnnotation(annotation)
@@ -2159,14 +1893,8 @@ function App() {
     setSaveStatus('Unsaved')
   }
 
-  const syncSelectedFrameFromAnnotationIds = (annotationIds) => {
-    const firstAnnotation = annotations.find((annotation) => annotationIds.includes(annotation.id))
-    if (firstAnnotation?.frameId) setSelectedFrameId(firstAnnotation.frameId)
-  }
-
   const selectSingleAnnotation = (annotationId) => {
     if (annotationId) setLastPreviewAnnotationId(annotationId)
-    if (annotationId) syncSelectedFrameFromAnnotationIds([annotationId])
     setSelectedAnnotationIds(annotationId ? [annotationId] : [])
   }
 
@@ -2175,14 +1903,12 @@ function App() {
     const nextIds = selectedAnnotationIds.includes(annotationId)
       ? selectedAnnotationIds.filter((id) => id !== annotationId)
       : [...selectedAnnotationIds, annotationId]
-    syncSelectedFrameFromAnnotationIds(nextIds)
     setSelectedAnnotationIds(nextIds)
   }
 
   const selectAnnotationsFromChild = (annotationIds) => {
     const nextIds = Array.isArray(annotationIds) ? annotationIds : []
     if (nextIds.length === 1) setLastPreviewAnnotationId(nextIds[0])
-    syncSelectedFrameFromAnnotationIds(nextIds)
     setSelectedAnnotationIds(nextIds)
   }
 
@@ -2264,7 +1990,7 @@ function App() {
       referencedEntityCount,
       typeSummary,
     })
-  }, [annotations, entities, selectedAnnotationIds])
+  }, [annotations, entities, selectedAnnotationIds, setPendingAnnotationDelete])
 
   const confirmDeleteSelectedAnnotations = () => {
     if (!pendingAnnotationDelete) return
@@ -2316,19 +2042,19 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [deleteSelectedAnnotation, pendingAnnotationDelete, selectedAnnotationIds])
 
-  const requestBindSelectedAnnotationsToCurrentPlaybackFrame = () => {
+  const requestSetSelectedAnnotationsVideoTime = () => {
     if (source?.kind !== 'video') {
       setMessage('Bind failed: current source is not a video.')
       return
     }
     if (selectedAnnotationIds.length === 0) return
-    setBindFrameRequest({
-      id: createId('bind_frame'),
+    setVideoTimeRequest({
+      id: createId('video_time'),
       annotationIds: [...selectedAnnotationIds],
     })
   }
 
-  const openBindFrameConfirmDialog = ({
+  const openVideoTimeConfirmDialog = ({
     annotationIds = [],
     duration = null,
     previewUrl = '',
@@ -2336,10 +2062,10 @@ function App() {
     videoSize = {},
   }) => {
     if (source?.kind !== 'video' || !Number.isFinite(time) || annotationIds.length === 0) {
-      setMessage('Bind failed: current playback frame is not available.')
+      setMessage('Bind failed: current video time is not available.')
       return
     }
-    setPendingBindFrame({
+    setPendingVideoTime({
       annotationIds,
       duration,
       previewUrl,
@@ -2348,81 +2074,49 @@ function App() {
     })
   }
 
-  const adjustPendingBindFrameTime = (delta) => {
-    if (!pendingBindFrame) return
-    const nextTime = Math.max(0, Number(pendingBindFrame.time || 0) + delta)
-    setBindFrameRequest({
-      id: createId('bind_frame'),
-      annotationIds: [...pendingBindFrame.annotationIds],
+  const adjustPendingVideoTime = (delta) => {
+    if (!pendingVideoTime) return
+    const nextTime = Math.max(0, Number(pendingVideoTime.time || 0) + delta)
+    setVideoTimeRequest({
+      id: createId('video_time'),
+      annotationIds: [...pendingVideoTime.annotationIds],
       time: nextTime,
     })
   }
 
-  const confirmBindFrame = () => {
-    if (!pendingBindFrame) return
+  const confirmVideoTime = () => {
+    if (!pendingVideoTime) return
     const {
       annotationIds = [],
-      duration = null,
       previewUrl = '',
       time,
       videoSize = {},
-    } = pendingBindFrame
+    } = pendingVideoTime
     if (source?.kind !== 'video' || !Number.isFinite(time) || annotationIds.length === 0) {
-      setPendingBindFrame(null)
-      setMessage('Bind failed: current playback frame is not available.')
+      setPendingVideoTime(null)
+      setMessage('Bind failed: current video time is not available.')
       return
     }
-    const existingFrame = findFrameByTimeStamp(frames, time, appSettings.frameTimestampToleranceSeconds)
-    const nextFrame = existingFrame
-      ? {
-          ...existingFrame,
-          timeStamp: time,
-          locator: {
-            ...existingFrame.locator,
-            time,
-          },
-          meta: {
-            ...existingFrame.meta,
-            width: videoSize.width || existingFrame.meta?.width || source.meta?.width || imageSize?.width || null,
-            height: videoSize.height || existingFrame.meta?.height || source.meta?.height || imageSize?.height || null,
-            duration: duration ?? existingFrame.meta?.duration ?? source.meta?.duration ?? null,
-          },
-          updatedAt: now,
-        }
-      : createVideoFrame(source, {
-          timeStamp: time,
-          width: videoSize.width || source.meta?.width || imageSize?.width || null,
-          height: videoSize.height || source.meta?.height || imageSize?.height || null,
-          duration: duration ?? source.meta?.duration ?? null,
-        })
-    const width = videoSize.width || nextFrame.meta?.width || imageSize?.width || null
-    const height = videoSize.height || nextFrame.meta?.height || imageSize?.height || null
+    const width = videoSize.width || imageSize?.width || null
+    const height = videoSize.height || imageSize?.height || null
     const selectedIdSet = new Set(annotationIds)
     const now = new Date().toISOString()
     setAnnotations((current) => current.map((annotation) => (
       selectedIdSet.has(annotation.id)
         ? {
             ...annotation,
-            frameId: nextFrame.id,
-            timeStamp: time,
+            sourceId: source.id,
+            locator: relocateVideoLocator(annotation.locator, time, pendingVideoTime.duration ?? source.meta?.duration),
             updatedAt: now,
           }
         : annotation
     )))
-    setFrames((current) => {
-      const normalizedCurrent = normalizeFrameTimeStamps(source?.kind, current)
-      return normalizedCurrent.some((item) => item.id === nextFrame.id)
-        ? normalizedCurrent.map((item) => (item.id === nextFrame.id ? nextFrame : item))
-        : [...normalizedCurrent, nextFrame]
-    })
-    setFrame(nextFrame)
-    setSelectedFrameId(nextFrame.id)
+    setCurrentLocator(createVideoLocator(time, pendingVideoTime.duration ?? source.meta?.duration))
     if (previewUrl && width && height) {
-      setFramePreviewUrl(previewUrl)
-      setFramePreviewCache((current) => ({
+      setSourcePreviewUrl(previewUrl)
+      setMediaPreviewCache((current) => ({
         ...current,
-        [nextFrame.id]: {
-          frameId: nextFrame.id,
+        [mediaLocationKey(source, { start: time })]: {
           ok: true,
           imageUrl: previewUrl,
           imageSize: { width, height },
@@ -2432,28 +2126,28 @@ function App() {
     }
     if (width && height) setImageSize({ width, height })
     setSaveStatus('Unsaved')
-    setPendingBindFrame(null)
-    setMessage(`Bound ${annotationIds.length} A object(s) to current playback frame ${formatTime(time)}.`)
+    setPendingVideoTime(null)
+    setMessage(`Updated ${annotationIds.length} A object(s) to video time ${formatTime(time)}.`)
   }
 
-  const cancelBindFrame = () => {
-    setPendingBindFrame(null)
+  const cancelVideoTime = () => {
+    setPendingVideoTime(null)
   }
 
-  const getBindFrameDialogPosition = () => {
+  const getVideoTimeDialogPosition = () => {
     const width = 430
     const defaultX = Math.max(8, window.innerWidth - width - 18)
     const defaultY = 84
-    return bindFrameDialogPosition || {
+    return videoTimeDialogPosition || {
       x: clamp(defaultX, 8, Math.max(8, window.innerWidth - width - 8)),
       y: defaultY,
     }
   }
 
-  const startBindFrameDialogDrag = (event) => {
-    const position = getBindFrameDialogPosition()
-    setBindFrameDialogPosition(position)
-    setBindFrameDialogDrag({
+  const startVideoTimeDialogDrag = (event) => {
+    const position = getVideoTimeDialogPosition()
+    setVideoTimeDialogPosition(position)
+    setVideoTimeDialogDrag({
       offsetX: event.clientX - position.x,
       offsetY: event.clientY - position.y,
     })
@@ -2467,13 +2161,11 @@ function App() {
             : annotation
         ))
       : annotations
-    const normalized = ensureFramesForAnnotationTimeStamps(source, frames, rawAnnotations, appSettings.frameTimestampToleranceSeconds)
 
     return {
-      schemaVersion: 1,
+      schemaVersion: ANNOTATION_SCHEMA_VERSION,
       sources: source ? [source] : [],
-      frames: normalized.frames,
-      annotations: normalized.annotations,
+      annotations: rawAnnotations,
       simpleNotes: normalizeSimpleNotes(simpleNotes),
       entities: entities.map((entity) => sanitizeEntityForPersistence(entity)),
       collections: [],
@@ -2526,7 +2218,6 @@ function App() {
   useEffect(() => {
     const unregister = registerActions([
       { id: 'ab.aObject.goTo', handler: () => actionHandlersRef.current.goToAObjectFromMenu?.() },
-      { id: 'ab.frame.goTo', handler: () => actionHandlersRef.current.goToFrameFromMenu?.() },
       { id: 'ab.entity.goTo', handler: () => actionHandlersRef.current.goToEntityFromMenu?.() },
       { id: 'global.undoDelete', handler: () => actionHandlersRef.current.undoLastDelete?.() },
       { id: 'global.openSettings', handler: () => actionHandlersRef.current.openSettingsDialog?.() },
@@ -2620,7 +2311,7 @@ function App() {
     outputFolder,
     tasks,
     entity = null,
-    frameImages = [],
+    previewImages = [],
     mode = 'items',
     summary = {},
   }) => {
@@ -2639,7 +2330,7 @@ function App() {
         sourceFilePath: source.filePath,
         outputFolder,
         entity,
-        frameImages,
+        previewImages,
         mode,
         tasks,
       })
@@ -2673,7 +2364,8 @@ function App() {
 
   const prepareAnnotationExportBatch = async (entries = []) => {
     const snapshotPromises = new Map()
-    const frameImagesById = new Map()
+    const previewImagesByKey = new Map()
+    const scope = `${editorWorkspace.activeId}:${source?.id || ''}`
 
     const getMediaSnapshot = (annotation) => {
       const mediaTarget = source?.kind === 'pdf'
@@ -2683,30 +2375,19 @@ function App() {
         return Promise.resolve({ ok: false, reason: 'media-frame-target-unavailable' })
       }
 
-      const frameId = mediaTarget.frame.id
-      if (snapshotPromises.has(frameId)) return snapshotPromises.get(frameId)
+      const imageKey = mediaTarget.key
+      if (snapshotPromises.has(imageKey)) return snapshotPromises.get(imageKey)
 
-      const cached = framePreviewCache[frameId]
+      const cached = mediaPreviewCache[imageKey]
       if (source?.kind !== 'pdf' && cached?.imageUrl && cached?.imageSize) {
         const cachedResult = Promise.resolve({
           ok: true,
-          frameId,
+          imageKey,
           imageUrl: cached.imageUrl,
           imageSize: cached.imageSize,
         })
-        snapshotPromises.set(frameId, cachedResult)
+        snapshotPromises.set(imageKey, cachedResult)
         return cachedResult
-      }
-
-      if (source?.kind === 'video' && frame?.id === frameId && framePreviewUrl && imageSize) {
-        const currentResult = Promise.resolve({
-          ok: true,
-          frameId,
-          imageUrl: framePreviewUrl,
-          imageSize,
-        })
-        snapshotPromises.set(frameId, currentResult)
-        return currentResult
       }
 
       const capturePromise = source?.kind === 'pdf'
@@ -2723,17 +2404,19 @@ function App() {
         if (!result?.ok) return result
         const normalizedResult = {
           ok: true,
-          frameId,
+          imageKey,
           imageUrl: result.previewUrl,
           imageSize: result.imageSize,
         }
-        setFramePreviewCache((current) => ({
-          ...current,
-          [frameId]: normalizedResult,
-        }))
+        if (activePreviewSessionRef.current === scope) {
+          setMediaPreviewCache((current) => ({
+            ...current,
+            [imageKey]: normalizedResult,
+          }))
+        }
         return normalizedResult
       })
-      snapshotPromises.set(frameId, snapshotPromise)
+      snapshotPromises.set(imageKey, snapshotPromise)
       return snapshotPromise
     }
 
@@ -2755,15 +2438,15 @@ function App() {
 
       const task = createAnnotationExportTask(annotation, snapshot.imageSize, options)
       if (!task) return { ok: false, reason: 'invalid-a-object' }
-      frameImagesById.set(snapshot.frameId, {
-        frameId: snapshot.frameId,
+      previewImagesByKey.set(snapshot.imageKey, {
+        key: snapshot.imageKey,
         dataUrl: snapshot.imageUrl,
       })
       return {
         ok: true,
         task: {
           ...task,
-          sourceFrameId: snapshot.frameId,
+          sourceImageKey: snapshot.imageKey,
         },
       }
     }))
@@ -2773,7 +2456,7 @@ function App() {
     return {
       ok: true,
       tasks: prepared.map((item) => item.task),
-      frameImages: [...frameImagesById.values()],
+      previewImages: [...previewImagesByKey.values()],
     }
   }
 
@@ -2799,7 +2482,7 @@ function App() {
     return exportTasks({
       outputFolder,
       tasks: prepared.tasks,
-      frameImages: prepared.frameImages,
+      previewImages: prepared.previewImages,
       mode: 'single-a-object',
       summary: {
         title: 'Export Crop',
@@ -2818,6 +2501,7 @@ function App() {
       ? selectedCards.map((card) => ({
           aObjectId: card.aObjectId,
           role: card.role,
+          comment: card.comment || '',
         }))
       : getEntityAObjectRefs(entity)
     const exportTitle = selectedMode ? 'Export Selected' : 'Export Entity'
@@ -2828,6 +2512,7 @@ function App() {
         options: {
           index,
           role: ref.role,
+          comment: ref.comment || '',
         },
       }
     })
@@ -2860,7 +2545,7 @@ function App() {
     return exportTasks({
       outputFolder,
       tasks: prepared.tasks,
-      frameImages: prepared.frameImages,
+      previewImages: prepared.previewImages,
       mode: selectedMode ? 'selected-entity-items' : 'entity',
       summary: {
         title: exportTitle,
@@ -2898,177 +2583,55 @@ function App() {
     return annotation.id
   }
 
-  const getAnnotationFrame = useCallback((annotation) => {
-    if (!annotation) return null
-    const matchedFrame = frames.find((item) => item.id === annotation.frameId)
-    if (matchedFrame) return matchedFrame
-    if (frame?.id === annotation.frameId) return frame
-    const timeStamp = Number(annotation.timeStamp)
-    if (source?.kind === 'video' && Number.isFinite(timeStamp)) {
-      return {
-        id: annotation.frameId || `frame_timestamp_${annotation.id}`,
-        sourceId: source.id,
-        kind: 'video-frame',
-        locator: {
-          time: timeStamp,
-        },
-        meta: {
-          width: source.meta?.width ?? imageSize?.width ?? null,
-          height: source.meta?.height ?? imageSize?.height ?? null,
-          duration: source.meta?.duration ?? null,
-        },
-        virtual: true,
-      }
-    }
-
-    return null
-  }, [frame, frames, imageSize?.height, imageSize?.width, source])
-
   const getAnnotationVideoTarget = useCallback((annotation) => {
-    if (source?.kind !== 'video') return null
-    const annotationFrame = getAnnotationFrame(annotation)
-    if (annotationFrame?.kind !== 'video-frame') return null
-    const time = Number(annotationFrame.locator?.time)
-    if (!Number.isFinite(time)) return null
-    return {
-      frame: annotationFrame,
-      time,
-    }
-  }, [getAnnotationFrame, source?.kind])
+    const target = resolveMediaTarget(source, annotation)
+    return target?.kind === 'video' ? target : null
+  }, [source])
 
   const getAnnotationPdfTarget = useCallback((annotation) => {
-    if (source?.kind !== 'pdf') return null
-    const annotationFrame = getAnnotationFrame(annotation)
-    const page = getPdfFramePage(annotationFrame)
-    return page ? { frame: annotationFrame, page } : null
-  }, [getAnnotationFrame, source?.kind])
+    const target = resolveMediaTarget(source, annotation)
+    return target?.kind === 'pdf' ? target : null
+  }, [source])
 
   const getAnnotationPreview = (annotation) => {
-    if (!annotation) return null
-    if (source?.kind === 'image') {
-      return {
-        imageUrl: source.fileUrl,
-        imageSize,
-      }
-    }
-    if (source?.kind === 'pdf') {
-      const pdfTarget = getAnnotationPdfTarget(annotation)
-      if (!pdfTarget) return null
-      const cachedPreview = framePreviewCache[pdfTarget.frame.id]
-      if (cachedPreview?.imageUrl && cachedPreview?.imageSize) return cachedPreview
-      if (cachedPreview?.ok === false) return cachedPreview
-      return null
-    }
-    const videoTarget = getAnnotationVideoTarget(annotation)
-    if (!videoTarget) return null
-    const cachedPreview = framePreviewCache[videoTarget.frame.id]
-    if (cachedPreview?.imageUrl && cachedPreview?.imageSize) return cachedPreview
-    if (cachedPreview?.ok === false) {
-      return {
-        frameId: videoTarget.frame.id,
-        ok: false,
-        reason: cachedPreview.reason || 'frame-preview-failed',
-      }
-    }
-    if (frame?.id === videoTarget.frame.id && framePreviewUrl && imageSize) {
-      return {
-        frameId: videoTarget.frame.id,
-        imageUrl: framePreviewUrl,
-        imageSize,
-      }
-    }
-    return null
+    const target = resolveMediaTarget(source, annotation)
+    if (!target) return null
+    if (target.kind === 'image') return { imageUrl: source.fileUrl, imageSize }
+    return mediaPreviewCache[target.key] || null
   }
 
-  const ensureAnnotationPreview = useCallback((annotation) => {
-    if (!annotation || !source?.fileUrl || !['video', 'pdf'].includes(source.kind)) return
-    if (source.kind === 'pdf') {
-      const pdfTarget = getAnnotationPdfTarget(annotation)
-      if (!pdfTarget) return
-      if (framePreviewCache[pdfTarget.frame.id]?.imageUrl) return
-      if (framePreviewCache[pdfTarget.frame.id]?.ok === false) return
-      if (pendingPreviewFrameIdsRef.current.has(pdfTarget.frame.id)) return
-      pendingPreviewFrameIdsRef.current.add(pdfTarget.frame.id)
-      capturePdfPageSnapshot({ src: source.fileUrl, page: pdfTarget.page, renderScale: 2 })
-        .then((result) => {
-          setFramePreviewCache((current) => ({
-            ...current,
-            [pdfTarget.frame.id]: result?.ok
-              ? {
-                  frameId: pdfTarget.frame.id,
-                  ok: true,
-                  imageUrl: result.previewUrl,
-                  imageSize: result.imageSize,
-                  updatedAt: new Date().toISOString(),
-                }
-              : {
-                  frameId: pdfTarget.frame.id,
-                  ok: false,
-                  reason: result?.reason || 'pdf-page-snapshot-failed',
-                  updatedAt: new Date().toISOString(),
-                },
-          }))
-        })
-        .finally(() => pendingPreviewFrameIdsRef.current.delete(pdfTarget.frame.id))
-      return
-    }
-    const videoTarget = getAnnotationVideoTarget(annotation)
-    if (!videoTarget) return
-    if (framePreviewCache[videoTarget.frame.id]?.imageUrl) return
-    if (framePreviewCache[videoTarget.frame.id]?.ok === false) return
-    if (pendingPreviewFrameIdsRef.current.has(videoTarget.frame.id)) return
+  const activePreviewSessionRef = useRef(null)
+  useEffect(() => {
+    activePreviewSessionRef.current = `${editorWorkspace.activeId}:${source?.id || ''}`
+  }, [editorWorkspace.activeId, source?.id])
 
-    pendingPreviewFrameIdsRef.current.add(videoTarget.frame.id)
-    captureVideoFrameSnapshot({
-      src: source.fileUrl,
-      time: videoTarget.time,
-    }).then((result) => {
-      if (!result?.ok) {
-        setFramePreviewCache((current) => ({
-          ...current,
-          [videoTarget.frame.id]: {
-            frameId: videoTarget.frame.id,
-            ok: false,
-            reason: result?.reason || 'video-snapshot-failed',
-            updatedAt: new Date().toISOString(),
-          },
-        }))
-        return
-      }
-      setFramePreviewCache((current) => ({
+  const ensureAnnotationPreview = useCallback((annotation) => {
+    const target = resolveMediaTarget(source, annotation)
+    if (!source?.fileUrl || !target || target.kind === 'image') return
+    const { key } = target
+    const scope = `${editorWorkspace.activeId}:${source.id}`
+    const requestKey = `${scope}:${key}`
+    if (mediaPreviewCache[key] || pendingPreviewKeysRef.current.has(requestKey)) return
+    pendingPreviewKeysRef.current.add(requestKey)
+    const capture = target.kind === 'pdf'
+      ? capturePdfPageSnapshot({ src: source.fileUrl, page: target.page, renderScale: 2 })
+      : captureVideoFrameSnapshot({ src: source.fileUrl, time: target.time })
+    capture.then((result) => {
+      if (activePreviewSessionRef.current !== scope) return
+      setMediaPreviewCache((current) => ({
         ...current,
-        [videoTarget.frame.id]: {
-          frameId: videoTarget.frame.id,
-          ok: true,
-          imageUrl: result.previewUrl,
-          imageSize: result.imageSize,
-          updatedAt: new Date().toISOString(),
-        },
+        [key]: result?.ok
+          ? { ok: true, imageUrl: result.previewUrl, imageSize: result.imageSize }
+          : { ok: false, reason: result?.reason || 'source-preview-failed' },
       }))
-      setFrames((current) => current.map((item) => (
-        item.id === videoTarget.frame.id
-          ? {
-              ...item,
-              meta: {
-                ...item.meta,
-                width: result.imageSize.width,
-                height: result.imageSize.height,
-              },
-              updatedAt: new Date().toISOString(),
-            }
-          : item
-      )))
-    }).finally(() => {
-      pendingPreviewFrameIdsRef.current.delete(videoTarget.frame.id)
-    })
-  }, [framePreviewCache, getAnnotationPdfTarget, getAnnotationVideoTarget, source])
+    }).finally(() => pendingPreviewKeysRef.current.delete(requestKey))
+  }, [editorWorkspace.activeId, mediaPreviewCache, source])
 
   const previewAnnotationId = selectedAnnotationIds.length === 1
     ? selectedAnnotationIds[0]
     : selectedAnnotationIds.length === 0
       ? lastPreviewAnnotationId
       : null
-  const selectedFrameForInspector = frames.find((item) => item.id === selectedFrameId) || null
   const selectedEntityForInspector = entities.find((entity) => entity.id === selectedEntityId) || null
   const selectedSimpleNote = simpleNotes.find((note) => note.id === selectedSimpleNoteId) || null
   const simpleNoteFilterText = simpleNoteFilter.trim().toLowerCase()
@@ -3126,31 +2689,13 @@ function App() {
     ensureAnnotationPreview(annotation)
   }, [annotations, ensureAnnotationPreview, previewAnnotationId, source?.kind])
 
-  const getAnnotationFrameLabel = (annotation) => {
-    const annotationFrame = getAnnotationFrame(annotation)
-    if (!annotationFrame) return annotation.frameId ? 'missing frame' : '--'
-    if (annotationFrame.kind === 'video-frame') {
-      return formatTime(annotationFrame.locator?.time)
-    }
-    if (annotationFrame.kind === 'pdf-page') {
-      const page = getPdfFramePage(annotationFrame)
-      const bookPageLabel = annotationFrame.meta?.bookPageLabel
-      return bookPageLabel ? `PDF ${page} · Book ${bookPageLabel}` : `PDF page ${page || '--'}`
-    }
-    return 'image'
-  }
-
-  const getFrameLabel = (targetFrame) => {
-    if (!targetFrame) return '--'
-    if (targetFrame.kind === 'video-frame') {
-      return formatTime(Number(targetFrame.locator?.time))
-    }
-    if (targetFrame.kind === 'pdf-page') {
-      const page = getPdfFramePage(targetFrame)
-      return targetFrame.meta?.bookPageLabel
-        ? `Page ${page || '--'} · Book ${targetFrame.meta.bookPageLabel}`
-        : `Page ${page || '--'}`
-    }
+  const getAnnotationLocationLabel = (annotation) => {
+    const target = resolveMediaTarget(source, annotation)
+    if (!target) return '--'
+    if (target.kind === 'video') return formatTime(target.time)
+    if (target.kind === 'pdf') return annotation.locator.bookPageLabel != null
+      ? `PDF ${target.page} · Book ${annotation.locator.bookPageLabel}`
+      : `PDF page ${target.page}`
     return 'image'
   }
 
@@ -3205,66 +2750,20 @@ function App() {
     )
   }
 
-  const selectFrameFromInspector = (targetFrame) => {
-    if (!targetFrame) return
-    setSelectedFrameId(targetFrame.id)
-  }
-
-  const goToFrame = (targetFrame) => {
-    if (!targetFrame) return
-    setSelectedFrameId(targetFrame.id)
-    if (source?.kind === 'video' && targetFrame.kind === 'video-frame') {
-      const time = Number(targetFrame.locator?.time)
-      if (!Number.isFinite(time)) return
-      setVideoSeekRequest({
-        id: createId('seek'),
-        annotationId: null,
-        frameId: targetFrame.id,
-        time,
-      })
-      setFrame(targetFrame)
-      return
-    }
-
-    setFrame(targetFrame)
-    if (source?.kind === 'pdf' && targetFrame.kind === 'pdf-page') {
-      changePdfPage(getPdfFramePage(targetFrame))
-      return
-    }
-    if (source?.kind === 'image') {
-      setFramePreviewUrl(source.fileUrl || '')
-      if (targetFrame.meta?.width && targetFrame.meta?.height) {
-        setImageSize({ width: targetFrame.meta.width, height: targetFrame.meta.height })
-      }
-      return
-    }
-
-    const cachedPreview = framePreviewCache[targetFrame.id]
-    if (cachedPreview?.imageUrl) setFramePreviewUrl(cachedPreview.imageUrl)
-    if (cachedPreview?.imageSize) {
-      setImageSize(cachedPreview.imageSize)
-      return
-    }
-    if (targetFrame.meta?.width && targetFrame.meta?.height) {
-      setImageSize({ width: targetFrame.meta.width, height: targetFrame.meta.height })
-    }
-  }
-
   const seekVideoToAnnotation = (annotation) => {
     const videoTarget = getAnnotationVideoTarget(annotation)
     if (!videoTarget) {
-      setMessage(`Go To failed: missing video frame for A object ${annotation?.id || ''}`)
+      setMessage(`Go To failed: missing video location for A object ${annotation?.id || ''}`)
       return
     }
     setSelectedAnnotationIds([annotation.id])
+    setLastPreviewAnnotationId(annotation.id)
     setVideoSeekRequest({
       id: createId('seek'),
       annotationId: annotation.id,
-      frameId: videoTarget.frame.id,
       time: videoTarget.time,
     })
-    setFrame(videoTarget.frame)
-    setSelectedFrameId(videoTarget.frame.id)
+    setCurrentLocator(createVideoLocator(videoTarget.time, source.meta?.duration))
   }
 
   const goToAnnotation = (annotation) => {
@@ -3360,10 +2859,10 @@ function App() {
       kind: entityDialog.kind,
       subKind: entityDialog.subKind || '',
       label: entityDialog.label.trim() || 'Entity',
-      ...createACardPatch(refsToACardTree((entityDialog.sourceAObjectIds || []).map((aObjectId) => ({
-        aObjectId,
-        role: getDomainRolesForKind(getDomainSchema(entityDialog.subject, subjectSchemas), entityDialog.kind)[0]?.value || 'default',
-      })))),
+      ...createACardPatch(createCardsFromAnnotations(
+        (entityDialog.sourceAObjectIds || []).map(getAnnotationById).filter(Boolean),
+        { subject: entityDialog.subject, kind: entityDialog.kind }, subjectSchemas,
+      )),
       status: 'active',
       createdAt: now,
       updatedAt: now,
@@ -3382,7 +2881,7 @@ function App() {
     setAddToEntityDialog({
       entityId,
       annotationIds: idsToAdd,
-      role: getEntityDefaultRole(entity),
+      role: '',
     })
   }
 
@@ -3400,12 +2899,11 @@ function App() {
       const currentTree = getEntityACardTree(entity)
       const currentRefs = getEntityAObjectRefs(entity)
       const existingIds = new Set(currentRefs.map((ref) => ref.aObjectId))
-      const refsToAdd = idsToAdd
-        .filter((aObjectId) => !existingIds.has(aObjectId))
-        .map((aObjectId) => ({
-          aObjectId,
-          role,
-        }))
+      const refsToAdd = createCardsFromAnnotations(
+        idsToAdd.filter((aObjectId) => !existingIds.has(aObjectId))
+          .map(getAnnotationById).filter(Boolean),
+        entity, subjectSchemas, role,
+      )
       if (refsToAdd.length === 0) return entity
       return {
         ...entity,
@@ -3438,19 +2936,12 @@ function App() {
     setAObjectMenu(null)
   }
 
-  const openFrameMenu = (frameId, x, y) => {
-    setSelectedFrameId(frameId)
-    setFrameMenu({ frameId, x, y })
-  }
-
-  const closeFrameMenu = () => {
-    setFrameMenu(null)
-  }
-
-  const goToFrameFromMenu = () => {
-    const targetFrame = frames.find((item) => item.id === frameMenu?.frameId)
-    goToFrame(targetFrame)
-    closeFrameMenu()
+  const editAObjectDefaults = (annotationId) => {
+    if (!getAnnotationById(annotationId)) return
+    selectSingleAnnotation(annotationId)
+    setAbInspectorTab('a')
+    closeAObjectMenu()
+    window.requestAnimationFrame(() => aObjectPropertiesRef.current?.querySelector('select')?.focus())
   }
 
   const goToAObjectFromMenu = () => {
@@ -3466,46 +2957,21 @@ function App() {
     return firstCard ? getAnnotationById(firstCard.aObjectId) : null
   }
 
-  const getEntityDefaultFrame = (entity) => {
-    const annotation = getFirstEntityAnnotation(entity)
-    return annotation ? getAnnotationFrame(annotation) : null
-  }
-
   const goToEntityFromMenu = (entityId) => {
     const entity = entities.find((item) => item.id === entityId)
     if (!entity) return
     const annotation = getFirstEntityAnnotation(entity)
-    const defaultFrame = getEntityDefaultFrame(entity)
     setSelectedEntityId(entity.id)
     setAbInspectorTab('b')
     if (annotation) {
-      const videoTarget = getAnnotationVideoTarget(annotation)
-      if (source?.kind === 'pdf') {
-        goToAnnotation(annotation)
-      } else if (source?.kind === 'image' && defaultFrame) {
-        goToFrame(defaultFrame)
-        setSelectedAnnotationIds([annotation.id])
-        setLastPreviewAnnotationId(annotation.id)
-      } else if (!videoTarget) {
-        setMessage(`Entity Go To failed: missing video frame for A object ${annotation.id}`)
-      } else {
-        setSelectedAnnotationIds([annotation.id])
-        setLastPreviewAnnotationId(annotation.id)
-        setVideoSeekRequest({
-          id: createId('seek'),
-          annotationId: annotation.id,
-          frameId: videoTarget.frame.id,
-          time: videoTarget.time,
-        })
-        setFrame(videoTarget.frame)
-        setSelectedFrameId(videoTarget.frame.id)
-      }
+      if (source?.kind === 'image') {
+        selectSingleAnnotation(annotation.id)
+      } else goToAnnotation(annotation)
     }
     closeEntityMenu()
   }
 
   actionHandlersRef.current.goToAObjectFromMenu = goToAObjectFromMenu
-  actionHandlersRef.current.goToFrameFromMenu = goToFrameFromMenu
   actionHandlersRef.current.goToEntityFromMenu = () => goToEntityFromMenu(entityMenu?.entityId)
 
   const removeAObjectFromEntity = (entityId, annotationId) => {
@@ -3577,7 +3043,7 @@ function App() {
       ...stripEntityFrameFields(entity),
       id: createId('b'),
       label: `${entity.label || 'Entity'} Copy`,
-      ...createACardPatch(refsToACardTree(getEntityAObjectRefs(entity))),
+      ...createACardPatch(cloneACardTree(getEntityACardTree(entity))),
       createdAt: now,
       updatedAt: now,
     }
@@ -4191,10 +3657,7 @@ function App() {
 
   const renderAObjectRow = (annotation, index) => {
     const relatedEntities = getEntitiesForAnnotation(annotation.id)
-    const annotationFrame = getAnnotationFrame(annotation)
-    const annotationTime = annotationFrame?.kind === 'video-frame'
-      ? Number(annotationFrame.locator?.time)
-      : null
+    const annotationTime = source?.kind === 'video' ? getVideoStart(annotation.locator) : null
 
     return (
       <details
@@ -4227,7 +3690,7 @@ function App() {
         >
           <span>{index + 1}. {annotation.type}</span>
           <small>
-            <span className="object-frame-label">{getAnnotationFrameLabel(annotation)}</span>
+            <span className="object-frame-label">{getAnnotationLocationLabel(annotation)}</span>
             {getAnnotationSummary(annotation)}
             {relatedEntities.length ? ` / B:${relatedEntities.length}` : ''}
           </small>
@@ -4260,7 +3723,7 @@ function App() {
           </button>
         ))}
       </nav>
-      <div className={abInspectorTab === 'simpleNotes' ? 'ab-inspector-content simple-notes-active' : 'ab-inspector-content'}>
+      <div className={`ab-inspector-content${abInspectorTab === 'simpleNotes' ? ' simple-notes-active' : abInspectorTab === 'a' ? ' a-objects-active' : ''}`}>
         {abInspectorTab === 'source' ? <section className="panel-section">
           <div className="section-title">Source</div>
           {source ? (
@@ -4281,82 +3744,46 @@ function App() {
           )}
         </section> : null}
 
-        {abInspectorTab === 'frame' ? <section className="panel-section">
-          <div className="section-title">Frame List</div>
-          <div className="inspector-status-row">
-            <span>Frames: <strong>{frames.length}</strong></span>
-            <span>Current: <strong title={frame?.id || ''}>{frame ? getFrameLabel(frame) : '--'}</strong></span>
-            <span>Selected: <strong title={selectedFrameId || ''}>{selectedFrameForInspector ? getFrameLabel(selectedFrameForInspector) : '--'}</strong></span>
-          </div>
-          {frame ? (
-            <dl className="info-list">
-              <dt>id</dt>
-              <dd title={frame.id}>{frame.id}</dd>
-              <dt>source</dt>
-              <dd title={frame.sourceId}>{frame.sourceId}</dd>
-              <dt>kind</dt>
-              <dd>{frame.kind}</dd>
-              <dt>label</dt>
-              <dd>{getFrameLabel(frame)}</dd>
-            </dl>
-          ) : (
-            <div className="empty-state">No frame created.</div>
-          )}
-          {frames.length === 0 ? (
-            <div className="empty-state">No frame list.</div>
-          ) : (
-            <div className="frame-list">
-              {frames.map((item, index) => (
-                <div
-                  className={[
-                    'frame-row',
-                    item.id === selectedFrameId ? 'selected' : '',
-                    item.id === frame?.id ? 'current' : '',
-                  ].filter(Boolean).join(' ')}
-                  key={item.id}
-                  onClick={() => selectFrameFromInspector(item)}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    openFrameMenu(item.id, event.clientX, event.clientY)
-                  }}
-                  title={item.id}
-                >
-                  <div className="frame-row-main">
-                    <strong>{index + 1}. {getFrameLabel(item)}</strong>
-                    <small>
-                      {item.kind}
-                      {' / '}
-                      A:{annotations.filter((annotation) => annotation.frameId === item.id).length}
-                    </small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section> : null}
-
-        {abInspectorTab === 'a' ? <section className="panel-section">
+        {abInspectorTab === 'a' ? <section className="panel-section a-objects-section">
           <div className="section-title">A Objects</div>
           <div className="inspector-status-row">
             <span>Total: <strong>{annotations.length}</strong></span>
             <span>Selected A: <strong>{selectedAnnotationIds.length}</strong></span>
             <span>Preview A: <strong title={previewAnnotationId || ''}>{getCompactId(previewAnnotationId)}</strong></span>
           </div>
-          {annotations.length === 0 ? (
-            <div className="empty-state">No annotation objects.</div>
-          ) : (
-            <div
-              className="object-list"
-              onBlur={(event) => {
-                if (event.currentTarget.contains(event.relatedTarget)) return
-                window.setTimeout(() => {
-                  setExpandedAObjectId(null)
-                }, 0)
-              }}
-            >
-              {annotations.map(renderAObjectRow)}
-            </div>
-          )}
+          <AObjectSplit
+            ratio={aObjectSplitRatio}
+            onRatioChange={setAObjectSplitRatio}
+            list={annotations.length === 0 ? (
+              <div className="object-list empty-state">No annotation objects.</div>
+            ) : (
+              <div
+                className="object-list"
+                onBlur={(event) => {
+                  if (event.currentTarget.contains(event.relatedTarget)) return
+                  window.setTimeout(() => {
+                    setExpandedAObjectId(null)
+                  }, 0)
+                }}
+              >
+                {annotations.map(renderAObjectRow)}
+              </div>
+            )}
+            properties={
+              <div className="a-object-properties" ref={aObjectPropertiesRef}>
+                <AObjectProperties
+                  annotation={selectedAnnotationIds.length === 1 ? getAnnotationById(selectedAnnotationIds[0]) : null}
+                  selectedCount={selectedAnnotationIds.length}
+                  subjectSchemas={subjectSchemas}
+                  onChange={(patch) => {
+                    if (selectedAnnotationIds.length === 1) {
+                      updateAnnotation(selectedAnnotationIds[0], { ...patch, updatedAt: new Date().toISOString() })
+                    }
+                  }}
+                />
+              </div>
+            }
+          />
         </section> : null}
 
         {abInspectorTab === 'b' ? <section
@@ -4508,7 +3935,6 @@ function App() {
                     event.stopPropagation()
                     selectSimpleNote(note.id)
                     simpleNoteListRef.current?.focus()
-                    setFrameMenu(null)
                     setAObjectMenu(null)
                     setEntityMenu(null)
                     setSimpleNoteMenu({
@@ -4777,9 +4203,10 @@ function App() {
         ) : (
           <div className="ab-workspace">
             <ABEditor
+              key={editorWorkspace.activeId}
               annotationFilePath={annotationFilePath}
               annotations={annotations}
-              bindFrameRequest={bindFrameRequest}
+              videoTimeRequest={videoTimeRequest}
               cancelTextEdit={cancelTextEdit}
               commitTextEdit={commitTextEdit}
               displayInput={currentABInput}
@@ -4792,9 +4219,10 @@ function App() {
                   {getKindLabel(entity.subject, entity.kind)}: {entity.label}
                 </>
               )}
-              frame={frame}
-              frames={frames}
-              framePreviewUrl={framePreviewUrl}
+              currentLocator={currentLocator}
+              videoTimeTolerance={appSettings.frameTimestampToleranceSeconds}
+              pdfPageInfo={pdfPageInfo}
+              sourcePreviewUrl={sourcePreviewUrl}
               ensureAnnotationPreview={ensureAnnotationPreview}
               getAnnotationPreview={getAnnotationPreview}
               inspectorContent={renderABInspectorContent()}
@@ -4807,13 +4235,14 @@ function App() {
               mediaBottomTab={abMediaBottomTab}
               onAddAnnotation={addAnnotation}
               onAddTextAnnotation={addTextAnnotation}
-              onBindCurrentVideoFrame={openBindFrameConfirmDialog}
-              onUseVideoFrame={useVideoFrame}
+              onSetCurrentVideoTime={openVideoTimeConfirmDialog}
+              onUseVideoPicture={useVideoPicture}
               onClearSelection={clearSelection}
               onCreateEntity={createBWorkflowEntity}
               onDeleteSelectedAnnotations={deleteSelectedAnnotation}
               onDeleteSimpleNote={deleteSimpleNote}
               onEditTextAnnotation={startEditTextAnnotation}
+              onEditAObjectProperties={editAObjectDefaults}
               onExportSelectedAnnotationCrop={exportSingleAnnotationCrop}
               onExportSelectedEntity={exportEntityCrops}
               onExportSelectedEntityItems={exportSelectedEntityItems}
@@ -4857,7 +4286,7 @@ function App() {
               pdfPage={pdfPage}
               pdfNavigationRequest={pdfNavigationRequest}
               pdfViewMode={pdfViewMode}
-              showBindFrameOverlay={Boolean(pendingBindFrame)}
+              showVideoTimeOverlay={Boolean(pendingVideoTime)}
               saveStatus={saveStatus}
               selectedAnnotationIds={selectedAnnotationIds}
               selectedSimpleNote={selectedSimpleNote}
@@ -4886,7 +4315,7 @@ function App() {
           const canGoTo = Boolean(annotation && (
             getAnnotationVideoTarget(annotation) || getAnnotationPdfTarget(annotation)
           ))
-          const canBindToCurrentFrame = Boolean(source?.kind === 'video' && selectedAnnotationIds.length > 0)
+          const canSetVideoTime = Boolean(source?.kind === 'video' && selectedAnnotationIds.length > 0)
           return (
             <div
               className="context-menu"
@@ -4897,10 +4326,11 @@ function App() {
               }}
             >
               <button disabled={!canGoTo} onClick={() => runAction('ab.aObject.goTo')} type="button">Go To</button>
-              <button disabled={!canBindToCurrentFrame} onClick={() => {
-                requestBindSelectedAnnotationsToCurrentPlaybackFrame()
+              <button onClick={() => editAObjectDefaults(aObjectMenu.annotationId)} type="button">编辑默认属性…</button>
+              <button disabled={!canSetVideoTime} onClick={() => {
+                requestSetSelectedAnnotationsVideoTime()
                 closeAObjectMenu()
-              }} type="button">Bind To Current Frame</button>
+              }} type="button">Set To Current Video Time</button>
               <div className="context-menu-separator" />
               <button onClick={() => {
                 deleteSelectedAnnotation()
@@ -4911,21 +4341,6 @@ function App() {
             </div>
           )
         })()
-      ) : null}
-
-      {frameMenu ? (
-        <div
-          className="context-menu"
-          onContextMenu={(event) => event.preventDefault()}
-          style={{
-            left: frameMenu.x,
-            top: frameMenu.y,
-          }}
-        >
-          <button onClick={() => runAction('ab.frame.goTo')} type="button">Go To Frame</button>
-          <div className="context-menu-separator" />
-          <button onClick={closeFrameMenu} type="button">Cancel</button>
-        </div>
       ) : null}
 
       {simpleNoteMenu ? (
@@ -4961,7 +4376,7 @@ function App() {
           const entity = entities.find((item) => item.id === entityMenu.entityId)
           const firstAnnotation = entity ? getFirstEntityAnnotation(entity) : null
           const canGoToEntity = Boolean(firstAnnotation && (
-            getAnnotationVideoTarget(firstAnnotation) || getEntityDefaultFrame(entity)
+            getAnnotationVideoTarget(firstAnnotation) || getAnnotationPdfTarget(firstAnnotation) || (source?.kind === 'image' && firstAnnotation)
           ))
           return (
             <div
@@ -5020,6 +4435,7 @@ function App() {
                     onChange={(event) => setAddToEntityDialog((current) => ({ ...current, role: event.target.value }))}
                     value={addToEntityDialog.role}
                   >
+                    <option value="">使用各 A 对象的默认角色（不适用时使用本 Kind 默认角色）</option>
                     {roleMissing ? (
                       <option value={addToEntityDialog.role}>{addToEntityDialog.role} (invalid)</option>
                     ) : null}
@@ -5028,6 +4444,9 @@ function App() {
                     ))}
                   </select>
                 </label>
+                <div className="a-object-properties-hint">
+                  Role 与 Comment 会复制到 Entity 内独立保存，不影响原始 A 对象。
+                </div>
                 <div className="dialog-actions">
                   <button onClick={addAObjectToEntity} type="button">OK</button>
                   <button onClick={closeAddToEntityDialog} type="button">Cancel</button>
@@ -5115,9 +4534,9 @@ function App() {
         </div>
       ) : null}
 
-      {pendingBindFrame ? (
+      {pendingVideoTime ? (
         (() => {
-          const dialogPosition = getBindFrameDialogPosition()
+          const dialogPosition = getVideoTimeDialogPosition()
           return (
             <div
               className="entity-dialog bind-frame-dialog bind-frame-floating-dialog"
@@ -5130,23 +4549,23 @@ function App() {
               className="dialog-title bind-frame-drag-handle"
               onMouseDown={(event) => {
                 event.preventDefault()
-                startBindFrameDialogDrag(event)
+                startVideoTimeDialogDrag(event)
               }}
             >
-              Bind To Current Frame
+              Set To Current Video Time
             </div>
             <div className="bind-frame-time">
-              {formatTime(pendingBindFrame.time)}
+              {formatTime(pendingVideoTime.time)}
             </div>
             <dl className="dialog-info">
               <dt>A Objects</dt>
-              <dd>{pendingBindFrame.annotationIds.length}</dd>
+              <dd>{pendingVideoTime.annotationIds.length}</dd>
               <dt>Video</dt>
               <dd title={source?.filePath || ''}>{source?.fileName || '--'}</dd>
               <dt>Size</dt>
               <dd>
-                {pendingBindFrame.videoSize?.width && pendingBindFrame.videoSize?.height
-                  ? `${pendingBindFrame.videoSize.width} x ${pendingBindFrame.videoSize.height}`
+                {pendingVideoTime.videoSize?.width && pendingVideoTime.videoSize?.height
+                  ? `${pendingVideoTime.videoSize.width} x ${pendingVideoTime.videoSize.height}`
                   : '--'}
               </dd>
             </dl>
@@ -5154,10 +4573,10 @@ function App() {
               Confirm binding selected A object(s) to this playback timestamp.
             </div>
             <div className="dialog-actions bind-frame-actions">
-              <button onClick={() => adjustPendingBindFrameTime(-0.5)} type="button">-0.5s</button>
-              <button onClick={() => adjustPendingBindFrameTime(0.5)} type="button">+0.5s</button>
-              <button onClick={confirmBindFrame} type="button">Confirm</button>
-              <button onClick={cancelBindFrame} type="button">Cancel</button>
+              <button onClick={() => adjustPendingVideoTime(-0.5)} type="button">-0.5s</button>
+              <button onClick={() => adjustPendingVideoTime(0.5)} type="button">+0.5s</button>
+              <button onClick={confirmVideoTime} type="button">Confirm</button>
+              <button onClick={cancelVideoTime} type="button">Cancel</button>
             </div>
             </div>
           )
@@ -5247,7 +4666,7 @@ function App() {
                         <section className="settings-section">
                           <div className="settings-section-title">Common</div>
                           <div className="settings-form-grid">
-                            <label htmlFor="settings-frame-tolerance">Frame timestamp tolerance</label>
+                            <label htmlFor="settings-frame-tolerance">Video time matching tolerance</label>
                             <div className="settings-unit-row">
                               <input
                                 autoFocus
@@ -5293,7 +4712,7 @@ function App() {
                                 type="number"
                                 value={settingsDialog.draft.videoPreviewCacheMaxFrames}
                               />
-                              <span>frames</span>
+                              <span>images / pages</span>
                             </div>
                             <label htmlFor="settings-video-preview-concurrency">Concurrent media snapshots</label>
                             <div className="settings-unit-row">
@@ -5312,7 +4731,7 @@ function App() {
                             </div>
                           </div>
                           <small>
-                            Frame tolerance controls timestamp matching. Media preview limits cover video frames and PDF pages, are shared by all CEditor sessions, and apply without restarting.
+                            Time tolerance controls video annotation visibility. Media preview limits cover video frames and PDF pages, are shared by all CEditor sessions, and apply without restarting.
                           </small>
                         </section>
 

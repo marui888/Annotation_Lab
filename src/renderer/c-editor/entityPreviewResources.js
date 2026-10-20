@@ -1,7 +1,7 @@
-import { getEntityAObjectRefs } from '../domain/domainSchemas'
-import { resolveEntitySourceKind } from '../domain/entitySourceKind'
-import { resolveAnnotationFrameTime } from '../media/annotationFrameTime'
-import { getPdfFramePage } from '../media/pdfAdapter'
+import { getEntityAObjectRefs } from '../domain/domainSchemas.js'
+import { resolveEntitySourceKind } from '../domain/entitySourceKind.js'
+import { hydrateAnnotationDocument } from '../../shared/annotationDocument.js'
+import { resolveMediaTarget } from '../../shared/mediaLocation.js'
 
 const DEFAULT_ANNOTATION_CACHE_ENTRIES = 32
 
@@ -59,10 +59,12 @@ export function createPdfPagePreviewKey(media, page, renderScale = 2) {
 
 export function prepareEntityPreview(result, entityId, videoFrames) {
   if (!result?.ok) return result || { ok: false, reason: 'load-annotation-file-failed' }
-  const entity = (result.data?.entities || []).find((item) => item.id === entityId) || null
+  const data = hydrateAnnotationDocument(result.data || {})
+  const source = data.sources?.[0]
+  const entity = (data.entities || []).find((item) => item.id === entityId) || null
   if (!entity) return { ok: false, reason: 'entity-not-found' }
 
-  const annotations = result.data?.annotations || []
+  const annotations = data.annotations || []
   const media = result.media || result.image || null
   const sourceKind = resolveEntitySourceKind(
     result.data?.sources?.[0]?.kind,
@@ -79,22 +81,21 @@ export function prepareEntityPreview(result, entityId, videoFrames) {
     )
     annotations.forEach((annotation) => {
       if (!entityAnnotationIds.has(annotation.id)) return
-      const resolvedFrame = resolveAnnotationFrameTime(annotation, result.data?.frames || [])
-      if (resolvedFrame.time === null) {
+      const targetLocation = resolveMediaTarget(source, annotation)
+      if (!targetLocation) {
         annotationPreviews[annotation.id] = {
           ok: false,
-          reason: 'frame-time-unavailable',
+          reason: 'video-time-unavailable',
           status: 'error',
         }
         return
       }
 
-      const frameKey = createVideoFramePreviewKey(media, resolvedFrame.time)
+      const frameKey = createVideoFramePreviewKey(media, targetLocation.time)
       activeFrameKeys.add(frameKey)
       const cached = videoFrames.get(frameKey)
       if (cached?.ok) {
         annotationPreviews[annotation.id] = {
-          frameId: resolvedFrame.frame?.id || annotation.frameId || '',
           imageSize: cached.imageSize,
           imageUrl: cached.previewUrl,
           ok: true,
@@ -104,14 +105,13 @@ export function prepareEntityPreview(result, entityId, videoFrames) {
       }
 
       annotationPreviews[annotation.id] = {
-        frameId: resolvedFrame.frame?.id || annotation.frameId || '',
         status: 'loading',
       }
       const target = targets.get(frameKey) || {
         annotationIds: [],
         frameKey,
         src: media?.fileUrl || '',
-        time: resolvedFrame.time,
+        time: targetLocation.time,
       }
       target.annotationIds.push(annotation.id)
       targets.set(frameKey, target)
@@ -122,10 +122,9 @@ export function prepareEntityPreview(result, entityId, videoFrames) {
     const entityAnnotationIds = new Set(
       getEntityAObjectRefs(entity).map((ref) => ref.aObjectId),
     )
-    const frameMap = new Map((result.data?.frames || []).map((item) => [item.id, item]))
     annotations.forEach((annotation) => {
       if (!entityAnnotationIds.has(annotation.id)) return
-      const page = getPdfFramePage(frameMap.get(annotation.frameId))
+      const page = resolveMediaTarget(source, annotation)?.page
       if (!page) {
         annotationPreviews[annotation.id] = {
           ok: false,
@@ -139,7 +138,6 @@ export function prepareEntityPreview(result, entityId, videoFrames) {
       const cached = videoFrames.get(frameKey)
       if (cached?.ok) {
         annotationPreviews[annotation.id] = {
-          frameId: annotation.frameId || '',
           imageSize: cached.imageSize,
           imageUrl: cached.previewUrl,
           ok: true,
@@ -148,7 +146,6 @@ export function prepareEntityPreview(result, entityId, videoFrames) {
         return
       }
       annotationPreviews[annotation.id] = {
-        frameId: annotation.frameId || '',
         status: 'loading',
       }
       const target = targets.get(frameKey) || {

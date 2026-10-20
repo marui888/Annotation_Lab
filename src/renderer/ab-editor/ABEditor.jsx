@@ -7,7 +7,8 @@ import {
   denormalizeRect,
   getPolygonBounds,
 } from '../core/geometryTransform'
-import { createVideoFrame } from '../media/videoAdapter'
+import { matchesMediaLocation } from '../../shared/mediaLocation.js'
+import { createVideoLocator, getVideoStart } from '../../shared/videoLocator.js'
 import VideoPlayer from '../video/VideoPlayer'
 import PdfViewer from '../pdf/PdfViewer'
 import { runAction } from '../actions/actionRegistry'
@@ -60,20 +61,21 @@ function getVideoAnnotationDragChipStyle(annotation, imageDisplaySize) {
   return null
 }
 
-function VideoFramePanel({
+function VideoPicturePanel({
   annotations,
-  bindFrameRequest,
+  videoTimeRequest,
   cancelTextEdit,
   commitTextEdit,
-  currentFrame,
+  currentLocator,
+  videoTimeTolerance = 0.1,
   displayScale,
   editingTextAnnotation,
   editingTextBox,
-  frameSurfaceStyle,
+  pictureSurfaceStyle,
   imageDisplaySize,
   onAddAnnotation,
   onAddTextAnnotation,
-  onBindCurrentVideoFrame,
+  onSetCurrentVideoTime,
   onAObjectContextMenu,
   onCanvasContextMenu,
   onClearSelection,
@@ -83,11 +85,11 @@ function VideoFramePanel({
   onStartAObjectDrag,
   onToolModeChange,
   onUpdateAnnotation,
-  onUseVideoFrame,
+  onUseVideoPicture,
   onVideoPlaybackInfo,
   playPauseRequestId,
   selectedAnnotationIds,
-  showBindFrameOverlay,
+  showVideoTimeOverlay,
   source,
   textDraft,
   toolMode,
@@ -95,7 +97,10 @@ function VideoFramePanel({
   videoSeekRequest,
 }) {
   const playerRef = useRef(null)
-  const bindRequestRef = useRef(bindFrameRequest?.id)
+  const initialLocatorRef = useRef(currentLocator)
+  const initialSeekAppliedRef = useRef(false)
+  const bindRequestRef = useRef(null)
+  const pendingVideoTimeRef = useRef(null)
   const onMetadataRef = useRef(onMetadata)
   const playPauseRequestRef = useRef(playPauseRequestId)
   const seekRequestRef = useRef(videoSeekRequest?.id)
@@ -105,15 +110,15 @@ function VideoFramePanel({
   const [transientAnnotationIds, setTransientAnnotationIds] = useState([])
   const isAnnotationVisibleInSourceView = (annotation) => {
     if (!annotation || !imageDisplaySize) return false
-    if (showBindFrameOverlay) return selectedAnnotationIds.includes(annotation.id)
+    if (showVideoTimeOverlay) return selectedAnnotationIds.includes(annotation.id)
     if (transientAnnotationIds.length > 0) return transientAnnotationIds.includes(annotation.id)
-    return Boolean(currentFrame?.id && playState !== 'Playing' && annotation.frameId === currentFrame.id)
+    return Boolean(playState !== 'Playing' && matchesMediaLocation(annotation, source.id, currentLocator, 'video', videoTimeTolerance))
   }
   const canAnnotate = Boolean(
     imageDisplaySize
     && (
-      ((playState !== 'Playing' || transientAnnotationIds.length > 0) && currentFrame?.id)
-      || showBindFrameOverlay
+      ((playState !== 'Playing' || transientAnnotationIds.length > 0) && getVideoStart(currentLocator) !== null)
+      || showVideoTimeOverlay
     )
   )
   const visibleAnnotations = canAnnotate
@@ -174,26 +179,20 @@ function VideoFramePanel({
     player.pause()
   }, [])
 
-  const setCurrentPlaybackFrame = useCallback((options = {}) => {
+  const setCurrentPlaybackPicture = useCallback(() => {
     if (!source || !playerRef.current) return
     const currentTime = playerRef.current.getCurrentTime()
+    if (!Number.isFinite(currentTime) || currentTime < 0) return
     const videoSize = playerRef.current.getVideoSize()
-    const duration = playerRef.current.getDuration()
     const previewUrl = playerRef.current.getFrameDataUrl()
-    const nextFrame = createVideoFrame(source, {
-      timeStamp: currentTime,
-      width: videoSize.width,
-      height: videoSize.height,
-      duration,
-    })
-    onUseVideoFrame?.(nextFrame, videoSize, previewUrl, { previewOnly: options.previewOnly !== false })
+    onUseVideoPicture?.(createVideoLocator(currentTime, playerRef.current.getDuration()), videoSize, previewUrl)
     setPlayState('Paused')
-    setStatusText(`Frame ready ${currentTime.toFixed(2)}s`)
-  }, [onUseVideoFrame, source])
+    setStatusText(`Picture ready ${currentTime.toFixed(2)}s`)
+  }, [onUseVideoPicture, source])
 
-  const sendBindFrameCandidate = useCallback((annotationIds = []) => {
+  const sendVideoTimeCandidate = useCallback((annotationIds = []) => {
     if (!source || !playerRef.current) {
-      onBindCurrentVideoFrame?.({
+      onSetCurrentVideoTime?.({
         annotationIds,
         time: Number.NaN,
       })
@@ -204,50 +203,44 @@ function VideoFramePanel({
     const videoSize = playerRef.current.getVideoSize()
     const duration = playerRef.current.getDuration()
     const previewUrl = playerRef.current.getFrameDataUrl()
-    onBindCurrentVideoFrame?.({
+    onSetCurrentVideoTime?.({
       annotationIds,
       duration,
       previewUrl,
       time: currentTime,
       videoSize,
     })
-  }, [onBindCurrentVideoFrame, source])
+  }, [onSetCurrentVideoTime, source])
 
   useEffect(() => {
-    if (!bindFrameRequest?.id || bindFrameRequest.id === bindRequestRef.current) return
-    bindRequestRef.current = bindFrameRequest.id
-    const annotationIds = bindFrameRequest.annotationIds || []
+    if (!videoTimeRequest?.id || videoTimeRequest.id === bindRequestRef.current) return
+    bindRequestRef.current = videoTimeRequest.id
+    const annotationIds = videoTimeRequest.annotationIds || []
     if (!source || !playerRef.current) {
-      sendBindFrameCandidate(annotationIds)
+      sendVideoTimeCandidate(annotationIds)
       return
     }
 
-    if (Number.isFinite(bindFrameRequest.time)) {
-      playerRef.current.seek(bindFrameRequest.time)
-      window.setTimeout(() => sendBindFrameCandidate(annotationIds), 180)
+    if (Number.isFinite(videoTimeRequest.time)) {
+      pendingVideoTimeRef.current = annotationIds
+      playerRef.current.seek(videoTimeRequest.time)
       return
     }
 
-    sendBindFrameCandidate(annotationIds)
-  }, [bindFrameRequest, sendBindFrameCandidate, source])
+    sendVideoTimeCandidate(annotationIds)
+  }, [videoTimeRequest, sendVideoTimeCandidate, source])
 
-  const rebuildPreviewAtCurrentTime = useCallback((targetFrame) => {
-    if (!source || !playerRef.current || !targetFrame) return
-    const videoSize = playerRef.current.getVideoSize()
-    const duration = playerRef.current.getDuration()
-    const previewUrl = playerRef.current.getFrameDataUrl()
-    const nextFrame = {
-      ...targetFrame,
-      meta: {
-        ...targetFrame.meta,
-        width: videoSize.width || targetFrame.meta?.width || null,
-        height: videoSize.height || targetFrame.meta?.height || null,
-        duration: duration || targetFrame.meta?.duration || null,
-      },
-      updatedAt: new Date().toISOString(),
-    }
-    onUseVideoFrame?.(nextFrame, videoSize, previewUrl, { previewOnly: true })
-  }, [onUseVideoFrame, source])
+  const rebuildPreviewAtCurrentTime = useCallback(() => {
+    if (!source || !playerRef.current) return
+    const player = playerRef.current
+    const start = player.getCurrentTime()
+    if (!Number.isFinite(start) || start < 0) return
+    onUseVideoPicture?.(
+      createVideoLocator(start, player.getDuration()),
+      player.getVideoSize(),
+      player.getFrameDataUrl()
+    )
+  }, [onUseVideoPicture, source])
 
   useEffect(() => {
     if (!playPauseRequestId || playPauseRequestId === playPauseRequestRef.current) return
@@ -268,19 +261,7 @@ function VideoFramePanel({
     const wasPaused = playerRef.current.isPaused()
     playerRef.current.seek(videoSeekRequest.time)
 
-    const rebuildPreview = () => {
-      if (!videoSeekRequest.frameId) return
-      rebuildPreviewAtCurrentTime({
-        id: videoSeekRequest.frameId,
-        sourceId: source?.id,
-        kind: 'video-frame',
-        locator: {
-          time: videoSeekRequest.time,
-        },
-      })
-    }
-
-    setTimeout(rebuildPreview, 180)
+    // Capture only after the player has decoded the requested picture (onSeeked).
 
     if (wasPaused) {
       setTransientAnnotationIds([])
@@ -302,7 +283,7 @@ function VideoFramePanel({
 
   return (
     <div className="video-viewer">
-      <div className="video-frame-viewer" style={frameSurfaceStyle}>
+      <div className="video-frame-viewer" style={pictureSurfaceStyle}>
         <VideoPlayer
           onCanPlay={() => setStatusText('Can play')}
           onEnded={() => {
@@ -312,12 +293,28 @@ function VideoFramePanel({
           onError={(player) => setStatusText(`Error ${player.error()?.code || ''}`)}
           onLoadedData={() => {
             setStatusText('Loaded data')
-            if (playerRef.current?.isPaused()) setCurrentPlaybackFrame()
+            if (!initialSeekAppliedRef.current) {
+              initialSeekAppliedRef.current = true
+              const initialStart = getVideoStart(initialLocatorRef.current)
+              if (initialStart !== null && initialStart > 0) {
+                playerRef.current?.seek(initialStart)
+                return
+              }
+            }
+            if (playerRef.current?.isPaused()) setCurrentPlaybackPicture()
           }}
           onLoadedMetadata={handleVideoLoadedMetadata}
+          onSeeked={() => {
+            if (pendingVideoTimeRef.current) {
+              const ids = pendingVideoTimeRef.current
+              pendingVideoTimeRef.current = null
+              sendVideoTimeCandidate(ids)
+            }
+            if (playerRef.current?.isPaused()) rebuildPreviewAtCurrentTime()
+          }}
           onPause={() => {
             setPlayState('Paused')
-            setCurrentPlaybackFrame()
+            setCurrentPlaybackPicture()
             emitPlaybackInfo({ state: 'Paused', status: 'Paused' })
           }}
           onPlay={() => {
@@ -333,15 +330,16 @@ function VideoFramePanel({
           ref={playerRef}
           src={source?.fileUrl}
         />
-        {canAnnotate && (showBindFrameOverlay || playState !== 'Playing' || transientAnnotationIds.length > 0) ? (
+        {canAnnotate && (showVideoTimeOverlay || playState !== 'Playing' || transientAnnotationIds.length > 0) ? (
           <div
             className={transientAnnotationIds.length > 0 ? 'annotation-layer-host video-annotation-layer transient' : 'annotation-layer-host video-annotation-layer'}
-            style={frameSurfaceStyle}
+            style={pictureSurfaceStyle}
           >
             <MediaAnnotationLayer
               annotations={visibleAnnotations}
               displayScale={displayScale}
-              frameId={currentFrame?.id || 'bind-preview-frame'}
+              sourceId={source.id}
+              locator={currentLocator || createVideoLocator(0, source.meta?.duration)}
               key={`video-annotation-layer-${toolMode}`}
               mode={toolMode}
               onAddAnnotation={onAddAnnotation}
@@ -420,7 +418,7 @@ function VideoFramePanel({
 export default function ABEditor({
   annotationFilePath,
   annotations,
-  bindFrameRequest,
+  videoTimeRequest,
   cancelTextEdit,
   commitTextEdit,
   displayInput,
@@ -430,9 +428,10 @@ export default function ABEditor({
   ensureAnnotationPreview,
   inspectorContent,
   formatEntityLabel = (entity) => entity.label || entity.id,
-  frame,
-  frames = [],
-  framePreviewUrl,
+  currentLocator,
+  videoTimeTolerance = 0.1,
+  pdfPageInfo = {},
+  sourcePreviewUrl,
   getAnnotationPreview,
   imageSize,
   initialInput,
@@ -443,11 +442,12 @@ export default function ABEditor({
   curStart = '',
   onAddAnnotation,
   onAddTextAnnotation,
-  onBindCurrentVideoFrame,
+  onSetCurrentVideoTime,
   onClearSelection,
   onCreateEntity,
   onDeleteSelectedAnnotations,
   onEditTextAnnotation,
+  onEditAObjectProperties,
   onExportSelectedAnnotationCrop,
   onExportSelectedEntity,
   onExportSelectedEntityItems,
@@ -475,7 +475,7 @@ export default function ABEditor({
   onToolModeChange,
   onUpdateAnnotation,
   onUpdateEntity,
-  onUseVideoFrame,
+  onUseVideoPicture,
   onVideoPlaybackInfo,
   playPauseRequestId,
   pdfPage = 1,
@@ -487,7 +487,7 @@ export default function ABEditor({
   selectedEntity,
   selectedSimpleNote,
   simpleNoteDraft = '',
-  showBindFrameOverlay = false,
+  showVideoTimeOverlay = false,
   source,
   subjectSchemas,
   textDraft,
@@ -513,12 +513,12 @@ export default function ABEditor({
   const [resizingWorkspacePart, setResizingWorkspacePart] = useState(null)
   const [isResizingAPreview, setIsResizingAPreview] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
-  const [pdfInteractionLockedFrameId, setPdfInteractionLockedFrameId] = useState(null)
+  const [pdfInteractionLockedPage, setPdfInteractionLockedPage] = useState(null)
 
-  const updatePdfInteractionLock = useCallback((targetFrameId, locked) => {
-    setPdfInteractionLockedFrameId((current) => {
-      if (locked) return targetFrameId
-      return current === targetFrameId ? null : current
+  const updatePdfInteractionLock = useCallback((targetPage, locked) => {
+    setPdfInteractionLockedPage((current) => {
+      if (locked) return targetPage
+      return current === targetPage ? null : current
     })
   }, [])
 
@@ -713,15 +713,14 @@ export default function ABEditor({
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
   }
 
-  const getSelectedFrameLabel = (annotation) => {
+  const getSelectedLocationLabel = (annotation) => {
     if (!annotation) return '--'
-    if (frame?.id !== annotation.frameId) return annotation.frameId || '--'
-    if (frame.kind === 'video-frame') return formatTime(frame.locator?.time)
-    if (frame.kind === 'pdf-page') {
-      const page = frame.locator?.physicalPage ?? frame.locator?.page
-      return frame.meta?.bookPageLabel
-        ? `PDF ${page} · Book ${frame.meta.bookPageLabel}`
-        : `PDF page ${page || '--'}`
+    if (source?.kind === 'video') return formatTime(getVideoStart(annotation.locator))
+    if (source?.kind === 'pdf') {
+      const { physicalPage, bookPageLabel } = annotation.locator || {}
+      return bookPageLabel != null
+        ? `PDF ${physicalPage} · Book ${bookPageLabel}`
+        : `PDF page ${physicalPage || '--'}`
     }
     return 'image'
   }
@@ -741,7 +740,7 @@ export default function ABEditor({
             <strong>A Preview</strong>
             <span>{previewAnnotation.type}</span>
             <span title={previewAnnotation.id}>{previewAnnotation.id}</span>
-            <span>{getSelectedFrameLabel(previewAnnotation)}</span>
+            <span>{getSelectedLocationLabel(previewAnnotation)}</span>
             <small>{previewAnnotation.type === 'text' ? previewAnnotation.text || 'FreeText' : ''}</small>
           </div>
           <APreviewCard
@@ -899,23 +898,40 @@ export default function ABEditor({
     })
   }
 
-  const renderPdfAnnotationOverlay = ({ width, height, displayScale: pdfDisplayScale }) => {
-    if (pdfViewMode !== 'single' || !frame?.id) return null
-    const pdfDisplaySize = { width, height }
-    const visibleAnnotations = annotations.filter((annotation) => annotation.frameId === frame.id)
-    const visibleSelection = selectedAnnotationIds.filter((annotationId) => (
-      visibleAnnotations.some((annotation) => annotation.id === annotationId)
+  const renderPdfPageOverlay = ({ page = pdfPage, width, height, displayScale: pdfDisplayScale }) => {
+    const locator = { physicalPage: page, bookPageLabel: pdfPageInfo[page]?.bookPageLabel ?? null }
+    const isLockedOut = Boolean(pdfInteractionLockedPage && pdfInteractionLockedPage !== page)
+    const visibleAnnotations = annotations.filter((annotation) => (
+      matchesMediaLocation(annotation, source.id, locator, 'pdf')
     ))
-    const pdfEditingText = editingTextAnnotation?.frameId === frame.id ? editingTextAnnotation : null
-    const pdfEditingTextBox = pdfEditingText
-      ? denormalizeRect(pdfEditingText.geometry, pdfDisplaySize)
-      : null
+    const visibleSelection = selectedAnnotationIds.filter((id) => (
+      visibleAnnotations.some((annotation) => annotation.id === id)
+    ))
+    const pdfDisplaySize = { width, height }
+    const pdfEditingText = editingTextAnnotation
+      && matchesMediaLocation(editingTextAnnotation, source.id, locator, 'pdf')
+      ? editingTextAnnotation : null
+    const pdfEditingTextBox = pdfEditingText ? denormalizeRect(pdfEditingText.geometry, pdfDisplaySize) : null
     return (
-      <div className="annotation-layer-host" style={{ width, height }}>
+      <div
+        className={`annotation-layer-host${isLockedOut ? ' pdf-interaction-locked-out' : ''}`}
+        onMouseDownCapture={(event) => {
+          if (isLockedOut) {
+            event.preventDefault()
+            event.stopPropagation()
+            return
+          }
+          if (page !== pdfPage) onPdfPageChange?.(page)
+        }}
+        style={{ width, height }}
+      >
         <MediaAnnotationLayer
           annotations={visibleAnnotations}
-          frameId={frame.id}
-          key={`pdf-annotation-layer-${frame.id}-${toolMode}`}
+          sourceId={source.id}
+          locator={locator}
+          interactionKey={page}
+          keyboardShortcutsEnabled={page === pdfPage || pdfInteractionLockedPage === page}
+          key={`pdf-layer-${page}-${toolMode}`}
           mode={toolMode}
           onAddAnnotation={onAddAnnotation}
           onAddTextAnnotation={onAddTextAnnotation}
@@ -939,21 +955,13 @@ export default function ABEditor({
             onBlur={commitTextEdit}
             onChange={(event) => updateTextDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                cancelTextEdit()
-              }
-              if (event.key === 'Enter' && event.ctrlKey) {
-                event.preventDefault()
-                commitTextEdit()
-              }
+              if (event.key === 'Escape') { event.preventDefault(); cancelTextEdit() }
+              if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); commitTextEdit() }
             }}
             onMouseDown={(event) => event.stopPropagation()}
             style={{
-              left: pdfEditingTextBox.x,
-              top: pdfEditingTextBox.y,
-              width: pdfEditingTextBox.width,
-              height: pdfEditingTextBox.height,
+              left: pdfEditingTextBox.x, top: pdfEditingTextBox.y,
+              width: pdfEditingTextBox.width, height: pdfEditingTextBox.height,
               color: pdfEditingText.style?.fill || '#ff4d4d',
               fontSize: `${(pdfEditingText.style?.fontSize || 18) * pdfDisplayScale}px`,
               padding: `${6 * pdfDisplayScale}px`,
@@ -961,139 +969,26 @@ export default function ABEditor({
             value={textDraft}
           />
         ) : null}
-        {visibleSelection.map((annotationId) => {
-          const annotation = getAnnotationById(annotationId)
+        {visibleSelection.map((id) => {
+          const annotation = getAnnotationById(id)
           const chipStyle = annotation ? getAnnotationDragChipStyle(annotation, pdfDisplaySize) : null
-          if (!annotation || !chipStyle) return null
+          if (!chipStyle) return null
           return (
             <button
               className="a-object-drag-chip"
               draggable
-              key={annotation.id}
-              onClick={(event) => event.stopPropagation()}
-              onDragStart={(event) => startAObjectDrag(event, visibleSelection)}
-              style={chipStyle}
-              title="Drag selected A object to B Workflow"
-              type="button"
-            >
-              A
-            </button>
-          )
-        })}
-      </div>
-    )
-  }
-
-  const renderPdfContinuousOverlay = ({ page, width, height, displayScale: pdfDisplayScale }) => {
-    const pageFrame = frames.find((item) => (
-      (item.locator?.physicalPage ?? item.locator?.page) === page
-    ))
-    if (!pageFrame) return null
-    const isLockedOut = Boolean(
-      pdfInteractionLockedFrameId && pdfInteractionLockedFrameId !== pageFrame.id
-    )
-    const visibleAnnotations = annotations.filter((annotation) => annotation.frameId === pageFrame.id)
-    const visibleSelection = selectedAnnotationIds.filter((annotationId) => (
-      visibleAnnotations.some((annotation) => annotation.id === annotationId)
-    ))
-    const pdfEditingText = editingTextAnnotation?.frameId === pageFrame.id ? editingTextAnnotation : null
-    const pdfEditingTextBox = pdfEditingText
-      ? denormalizeRect(pdfEditingText.geometry, { width, height })
-      : null
-    return (
-      <div
-        className={`annotation-layer-host${isLockedOut ? ' pdf-interaction-locked-out' : ''}`}
-        onMouseDownCapture={(event) => {
-          if (isLockedOut) {
-            event.preventDefault()
-            event.stopPropagation()
-            return
-          }
-          if (page !== pdfPage) onPdfPageChange?.(page)
-        }}
-        style={{ width, height }}
-      >
-        <MediaAnnotationLayer
-          annotations={visibleAnnotations}
-          frameId={pageFrame.id}
-          keyboardShortcutsEnabled={page === pdfPage || pdfInteractionLockedFrameId === pageFrame.id}
-          key={`pdf-continuous-annotation-layer-${pageFrame.id}-${toolMode}`}
-          mode={toolMode}
-          onAddAnnotation={onAddAnnotation}
-          onAddTextAnnotation={onAddTextAnnotation}
-          onAObjectContextMenu={openAObjectContextMenu}
-          onCanvasContextMenu={(x, y) => setContextMenu({ type: 'canvas', x, y })}
-          onCanvasDoubleClick={() => onToolModeChange('select')}
-          onClearSelection={onClearSelection}
-          onEditTextAnnotation={onEditTextAnnotation}
-          onInteractionLockChange={updatePdfInteractionLock}
-          onSelectAnnotation={onSelectAnnotation}
-          onToolModeChange={onToolModeChange}
-          onUpdateAnnotation={onUpdateAnnotation}
-          selectedAnnotationIds={visibleSelection}
-          size={{ width, height }}
-          displayScale={pdfDisplayScale}
-        />
-        {pdfEditingText && pdfEditingTextBox ? (
-          <textarea
-            autoFocus
-            className="inline-freetext-editor"
-            onBlur={commitTextEdit}
-            onChange={(event) => updateTextDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                event.preventDefault()
-                cancelTextEdit()
-              }
-              if (event.key === 'Enter' && event.ctrlKey) {
-                event.preventDefault()
-                commitTextEdit()
-              }
-            }}
-            onMouseDown={(event) => event.stopPropagation()}
-            style={{
-              left: pdfEditingTextBox.x,
-              top: pdfEditingTextBox.y,
-              width: pdfEditingTextBox.width,
-              height: pdfEditingTextBox.height,
-              color: pdfEditingText.style?.fill || '#ff4d4d',
-              fontSize: `${(pdfEditingText.style?.fontSize || 18) * pdfDisplayScale}px`,
-              padding: `${6 * pdfDisplayScale}px`,
-            }}
-            value={textDraft}
-          />
-        ) : null}
-        {visibleSelection.map((annotationId) => {
-          const annotation = getAnnotationById(annotationId)
-          const chipStyle = annotation
-            ? getAnnotationDragChipStyle(annotation, { width, height })
-            : null
-          if (!annotation || !chipStyle) return null
-          return (
-            <button
-              className="a-object-drag-chip"
-              draggable
-              key={annotation.id}
+              key={id}
               onClick={(event) => event.stopPropagation()}
               onDragStart={(event) => startAObjectDrag(event, selectedAnnotationIds)}
               style={chipStyle}
               title="Drag selected A object to B Workflow"
               type="button"
-            >
-              A
-            </button>
+            >A</button>
           )
         })}
       </div>
     )
   }
-
-  const pdfInteractionLockedFrame = frames.find((item) => (
-    item.id === pdfInteractionLockedFrameId
-  ))
-  const pdfInteractionLockedPage = pdfInteractionLockedFrame?.locator?.physicalPage
-    ?? pdfInteractionLockedFrame?.locator?.page
-    ?? null
 
   const closeContextMenu = () => {
     setContextMenu(null)
@@ -1173,7 +1068,8 @@ export default function ABEditor({
                     <div className="annotation-layer-host" style={currentImageDisplayStyle}>
                       <MediaAnnotationLayer
                         annotations={annotations}
-                        frameId={frame?.id}
+                        sourceId={source.id}
+                        locator={{}}
                         key={`image-annotation-layer-${toolMode}`}
                         mode={toolMode}
                         onAddAnnotation={onAddAnnotation}
@@ -1243,20 +1139,22 @@ export default function ABEditor({
                 </div>
               ) : isVideoSource ? (
                 <div className="video-stage">
-                  <VideoFramePanel
+                  <VideoPicturePanel
+                    key={source.id}
                     annotations={annotations}
-                    bindFrameRequest={bindFrameRequest}
+                    videoTimeRequest={videoTimeRequest}
                     cancelTextEdit={cancelTextEdit}
                     commitTextEdit={commitTextEdit}
-                    currentFrame={frame}
+                    currentLocator={currentLocator}
+                    videoTimeTolerance={videoTimeTolerance}
                     displayScale={displayScale}
                     editingTextAnnotation={editingTextAnnotation}
                     editingTextBox={editingTextBox}
-                    frameSurfaceStyle={currentImageDisplayStyle || { width: '100%', height: '100%' }}
+                    pictureSurfaceStyle={currentImageDisplayStyle || { width: '100%', height: '100%' }}
                     imageDisplaySize={imageDisplaySize}
                     onAddAnnotation={onAddAnnotation}
                     onAddTextAnnotation={onAddTextAnnotation}
-                    onBindCurrentVideoFrame={onBindCurrentVideoFrame}
+                    onSetCurrentVideoTime={onSetCurrentVideoTime}
                     onAObjectContextMenu={openAObjectContextMenu}
                     onCanvasContextMenu={(x, y) => setContextMenu({ type: 'canvas', x, y })}
                     onClearSelection={onClearSelection}
@@ -1267,10 +1165,10 @@ export default function ABEditor({
                     onStartAObjectDrag={startAObjectDrag}
                     onToolModeChange={onToolModeChange}
                     onUpdateAnnotation={onUpdateAnnotation}
-                    onUseVideoFrame={onUseVideoFrame}
+                    onUseVideoPicture={onUseVideoPicture}
                     onVideoPlaybackInfo={onVideoPlaybackInfo}
                     selectedAnnotationIds={selectedAnnotationIds}
-                    showBindFrameOverlay={showBindFrameOverlay}
+                    showVideoTimeOverlay={showVideoTimeOverlay}
                     source={source}
                     textDraft={textDraft}
                     toolMode={toolMode}
@@ -1297,8 +1195,8 @@ export default function ABEditor({
                   viewMode={pdfViewMode}
                   zoom={zoom}
                   zoomMode={zoomMode}
-                  renderSinglePageOverlay={renderPdfAnnotationOverlay}
-                  renderContinuousPageOverlay={renderPdfContinuousOverlay}
+                  renderSinglePageOverlay={renderPdfPageOverlay}
+                  renderContinuousPageOverlay={renderPdfPageOverlay}
                 />
               ) : (
                 <div className="media-stage-placeholder">
@@ -1361,7 +1259,7 @@ export default function ABEditor({
           bottomPanelHeight={bWorkflowBottomPanelHeight}
           getAnnotationPreview={getAnnotationPreview}
           ensureAnnotationPreview={ensureAnnotationPreview}
-          imageUrl={isVideoSource || isPdfSource ? undefined : framePreviewUrl}
+          imageUrl={isVideoSource || isPdfSource ? undefined : sourcePreviewUrl}
           imageSize={isVideoSource || isPdfSource ? undefined : imageSize}
           onExportEntity={onExportSelectedEntity}
           onExportSelectedEntityItems={onExportSelectedEntityItems}
@@ -1421,6 +1319,14 @@ export default function ABEditor({
             top: contextMenu.y,
           }}
         >
+          <button
+            disabled={contextMenu.annotationIds?.length !== 1}
+            onClick={() => {
+              onEditAObjectProperties?.(contextMenu.annotationIds[0])
+              closeContextMenu()
+            }}
+            type="button"
+          >编辑默认属性…</button>
           <button onClick={openNewEntityFromAObjectMenu} type="button">
             New Entity From Selected ({contextMenu.annotationIds.length})
           </button>
@@ -1449,8 +1355,8 @@ export default function ABEditor({
         {isPdfSource ? (
           <span>
             Page: <strong>{pdfPage} / {source.meta?.pageCount || '--'}</strong>
-            {frame?.meta?.bookPageLabel != null
-              ? <> · Book: <strong>{frame.meta.bookPageLabel}</strong></>
+            {pdfPageInfo[pdfPage]?.bookPageLabel != null
+              ? <> · Book: <strong>{pdfPageInfo[pdfPage].bookPageLabel}</strong></>
               : null}
           </span>
         ) : null}

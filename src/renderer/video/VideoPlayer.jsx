@@ -12,6 +12,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   onPlay,
   onPlaying,
   onReady,
+  onSeeked,
   onStalled,
   onWaiting,
   src,
@@ -28,6 +29,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     onPlay,
     onPlaying,
     onReady,
+    onSeeked,
     onStalled,
     onWaiting,
   })
@@ -43,10 +45,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       onPlay,
       onPlaying,
       onReady,
+      onSeeked,
       onStalled,
       onWaiting,
     }
-  }, [onCanPlay, onEnded, onError, onLoadedData, onLoadedMetadata, onPause, onPlay, onPlaying, onReady, onStalled, onWaiting])
+  }, [onCanPlay, onEnded, onError, onLoadedData, onLoadedMetadata, onPause, onPlay, onPlaying, onReady, onSeeked, onStalled, onWaiting])
 
   useImperativeHandle(ref, () => ({
     getCurrentTime: () => playerRef.current?.currentTime?.() ?? 0,
@@ -73,7 +76,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     play: () => playerRef.current?.play?.(),
     seek: (time) => {
       if (!Number.isFinite(time)) return
-      playerRef.current?.currentTime?.(Math.max(0, time))
+      const player = playerRef.current
+      if (!player) return
+      if (!player.seeking() && Math.abs((player.currentTime() || 0) - time) < 0.000001) {
+        player.trigger('seeked')
+        return
+      }
+      player.currentTime(Math.max(0, time))
     },
   }), [])
 
@@ -102,6 +111,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     player.on('play', () => handlersRef.current.onPlay?.(player))
     player.on('pause', () => handlersRef.current.onPause?.(player))
     player.on('playing', () => handlersRef.current.onPlaying?.(player))
+    player.on('seeked', () => handlersRef.current.onSeeked?.(player))
     player.on('waiting', () => handlersRef.current.onWaiting?.(player))
     player.on('stalled', () => handlersRef.current.onStalled?.(player))
     player.on('ended', () => handlersRef.current.onEnded?.(player))

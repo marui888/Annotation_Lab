@@ -3,10 +3,9 @@ import { getEntityAObjectRefs } from '../domain/domainSchemas'
 import { normalizeCDocument } from '../domain/cDocument'
 import { captureVideoFrameSnapshot } from '../media/videoFrameSnapshot'
 import { capturePdfPageSnapshot } from '../media/pdfPageSnapshot'
-import { getPdfFramePage } from '../media/pdfAdapter'
+import { resolveMediaTarget } from '../../shared/mediaLocation.js'
 import {
   getAnnotationSourceKind,
-  resolveAnnotationFrameTime,
 } from '../media/annotationFrameTime'
 
 const MAX_C_REF_EXPORT_DEPTH = 3
@@ -138,6 +137,7 @@ export async function prepareCompositeExport({
         entityLabel: entity.label || '',
         annotationId: ref.aObjectId,
         role: ref.role || '',
+        comment: ref.comment || '',
         entityItemIndex: refIndex,
       }
       if (!annotation) {
@@ -149,16 +149,16 @@ export async function prepareCompositeExport({
         ? { width: loadResult.media.width, height: loadResult.media.height }
         : null
       let imageDataUrl = ''
-      let sourceFrameId = ''
+      let sourceImageKey = ''
 
       if (sourceKind === 'video' && annotation.type !== 'text') {
-        const time = resolveAnnotationFrameTime(annotation, annotationData.frames || []).time
-        if (time === null) {
+        const time = resolveMediaTarget(annotationData.sources?.[0], annotation)?.time
+        if (!Number.isFinite(time)) {
           appendTask({ ...common, kind: 'error', annotationType: annotation.type, reason: 'video-frame-time-unavailable' })
           continue
         }
-        sourceFrameId = annotation.frameId || `time-${time}`
-        const frameCacheKey = `${sourceFilePath}:${sourceFrameId}:${time}`
+        sourceImageKey = resolveMediaTarget(annotationData.sources?.[0], annotation).key
+        const frameCacheKey = `${sourceFilePath}:${sourceImageKey}:${time}`
         if (!videoFrameCache.has(frameCacheKey)) {
           videoFrameCache.set(frameCacheKey, captureVideoFrameSnapshot({
             src: loadResult.media?.fileUrl,
@@ -178,15 +178,13 @@ export async function prepareCompositeExport({
         exportImageSize = snapshot.imageSize
         imageDataUrl = snapshot.previewUrl
       } else if (sourceKind === 'pdf' && annotation.type !== 'text') {
-        const annotationFrame = (annotationData.frames || [])
-          .find((candidate) => candidate.id === annotation.frameId)
-        const page = getPdfFramePage(annotationFrame)
+        const page = resolveMediaTarget(annotationData.sources?.[0], annotation)?.page
         if (!page) {
           appendTask({ ...common, kind: 'error', annotationType: annotation.type, reason: 'pdf-page-unavailable' })
           continue
         }
-        sourceFrameId = annotation.frameId || `page-${page}`
-        const frameCacheKey = `${sourceFilePath}:${sourceFrameId}:page:${page}`
+        sourceImageKey = resolveMediaTarget(annotationData.sources?.[0], annotation).key
+        const frameCacheKey = `${sourceFilePath}:${sourceImageKey}:page:${page}`
         if (!videoFrameCache.has(frameCacheKey)) {
           videoFrameCache.set(frameCacheKey, capturePdfPageSnapshot({
             src: loadResult.media?.fileUrl,
@@ -210,6 +208,7 @@ export async function prepareCompositeExport({
 
       const annotationTask = createAnnotationExportTask(annotation, exportImageSize, {
         role: ref.role,
+        comment: ref.comment || '',
       })
       if (!annotationTask) {
         appendTask({ ...common, kind: 'error', annotationType: annotation.type, reason: 'invalid-a-object' })
@@ -222,7 +221,7 @@ export async function prepareCompositeExport({
         kind: 'annotation',
         annotationType: annotation.type,
         sourceKind,
-        sourceFrameId,
+        sourceImageKey,
         imageDataUrl,
       })
     }

@@ -5,6 +5,117 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { setImmediate } from "node:timers";
 import { fileURLToPath, pathToFileURL } from "node:url";
+//#region src/shared/aObjectProperties.js
+function normalizeDefaultRole(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const result = {
+		subject: typeof value.subject === "string" ? value.subject : "",
+		kind: typeof value.kind === "string" ? value.kind : "",
+		role: typeof value.role === "string" ? value.role : ""
+	};
+	return result.subject || result.kind || result.role ? result : null;
+}
+function normalizeAObjectProperties(annotation) {
+	return {
+		defaultRole: normalizeDefaultRole(annotation?.defaultRole),
+		comment: typeof annotation?.comment === "string" ? annotation.comment : ""
+	};
+}
+//#endregion
+//#region src/shared/videoLocator.js
+var DEFAULT_VIDEO_RANGE_SECONDS = 2.55;
+function clampDefaultEnd(start, end, duration) {
+	return typeof duration === "number" && Number.isFinite(duration) && duration >= 0 ? Math.max(start, Math.min(end, duration)) : end;
+}
+function normalizeVideoLocator(locator, duration) {
+	const start = locator?.start;
+	if (typeof start !== "number" || !Number.isFinite(start) || start < 0) throw new Error("invalid-video-locator-start");
+	const end = locator.end === void 0 ? clampDefaultEnd(start, start + DEFAULT_VIDEO_RANGE_SECONDS, duration) : locator.end;
+	if (typeof end !== "number" || !Number.isFinite(end) || end < start) throw new Error("invalid-video-locator-end");
+	return {
+		start,
+		end
+	};
+}
+//#endregion
+//#region src/shared/annotationDocument.js
+var ANNOTATION_SCHEMA_VERSION = 3.1;
+function getAnnotationSchemaVersion(data) {
+	if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("invalid-annotation-document");
+	const version = data.schemaVersion ?? 1;
+	if (version !== 1 && version !== 2 && version !== 3 && version !== 3.1) throw new Error(`unsupported-annotation-schema-version:${version}`);
+	for (const field of [
+		"sources",
+		"annotations",
+		"entities",
+		"frames"
+	]) if (data[field] !== void 0 && !Array.isArray(data[field])) throw new Error(`invalid-annotation-field:${field}`);
+	return version;
+}
+function finiteNumber(value) {
+	if (typeof value !== "number" && typeof value !== "string") return null;
+	if (typeof value === "string" && !value.trim()) return null;
+	const number = Number(value);
+	return Number.isFinite(number) ? number : null;
+}
+function resolveTarget(annotation, sources, frameMap, version) {
+	const legacy = version === 1;
+	if (!legacy && (!annotation.sourceId || !annotation.locator || typeof annotation.locator !== "object" || Array.isArray(annotation.locator))) throw new Error(`invalid-annotation-locator:${annotation.id || ""}`);
+	const frame = frameMap.get(annotation.frameId);
+	const sourceId = frame?.sourceId || annotation.sourceId || sources[0]?.id;
+	const source = sources.find((item) => item.id === sourceId) || (legacy && sources.length === 1 ? sources[0] : null);
+	if (!source) throw new Error(`annotation-source-unavailable:${annotation.id || ""}`);
+	let locator = {};
+	if (source.kind === "video") {
+		const start = version === 3.1 ? annotation.locator.start : finiteNumber(frame?.locator?.time) ?? finiteNumber(frame?.timeStamp) ?? (legacy ? finiteNumber(annotation.timeStamp) : null) ?? finiteNumber(annotation.locator?.start) ?? finiteNumber(annotation.locator?.time);
+		try {
+			locator = normalizeVideoLocator({
+				start,
+				end: annotation.locator?.end
+			}, source.meta?.duration);
+		} catch (error) {
+			throw new Error(`${error.message}:${annotation.id || ""}`, { cause: error });
+		}
+	} else if (source.kind === "pdf") {
+		const page = finiteNumber(frame?.locator?.physicalPage ?? frame?.locator?.page) ?? finiteNumber(annotation.locator?.physicalPage);
+		if (page === null || page < 1 || !Number.isInteger(page)) throw new Error(`annotation-pdf-page-unavailable:${annotation.id}`);
+		locator.physicalPage = page;
+		locator.bookPageLabel = frame?.meta?.bookPageLabel ?? annotation.locator?.bookPageLabel ?? null;
+	} else if (source.kind !== "image") throw new Error(`unsupported-annotation-source-kind:${source.kind}`);
+	return {
+		locator,
+		source
+	};
+}
+function hydrateAnnotationDocument(data) {
+	return serializeAnnotationDocument(data);
+}
+function serializeAnnotationDocument(data) {
+	const version = getAnnotationSchemaVersion(data);
+	const sources = data.sources || [];
+	const frameMap = new Map((version === 1 ? data.frames || [] : []).map((frame) => [frame.id, frame]));
+	const annotations = (data.annotations || []).map((annotation) => {
+		const { locator, source } = resolveTarget(annotation, sources, frameMap, version);
+		const clean = {
+			...annotation,
+			...normalizeAObjectProperties(annotation),
+			sourceId: source.id,
+			locator
+		};
+		delete clean.frameId;
+		delete clean.timeStamp;
+		return clean;
+	});
+	const result = {
+		...data,
+		schemaVersion: ANNOTATION_SCHEMA_VERSION,
+		sources,
+		annotations
+	};
+	delete result.frames;
+	return result;
+}
+//#endregion
 //#region src/main/main.js
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
@@ -291,7 +402,7 @@ async function getPdfPayload(filePath) {
 }
 async function loadAnnotationFile(annotationFilePath) {
 	const text = await fs.readFile(annotationFilePath, "utf8");
-	const data = JSON.parse(text);
+	const data = hydrateAnnotationDocument(JSON.parse(text));
 	const rawSourceFilePath = data.sources?.[0]?.filePath || getSourceFilePathFromAnnotation(annotationFilePath);
 	if (!rawSourceFilePath) return {
 		ok: false,
@@ -327,6 +438,7 @@ async function collectAnnotationFiles(folderPath) {
 async function readBEntityIndexItem(dataFilePath) {
 	const text = await fs.readFile(dataFilePath, "utf8");
 	const data = JSON.parse(text);
+	getAnnotationSchemaVersion(data);
 	const sourceFilePath = data.sources?.[0]?.filePath || getSourceFilePathFromAnnotation(dataFilePath);
 	const declaredSourceKind = String(data.sources?.[0]?.kind || "").toLowerCase();
 	const sourceExtension = path.extname(sourceFilePath).toLowerCase();
@@ -673,7 +785,7 @@ app.whenReady().then(() => {
 			return {
 				ok: true,
 				annotationFilePath,
-				data: JSON.parse(text)
+				data: hydrateAnnotationDocument(JSON.parse(text))
 			};
 		} catch (error) {
 			if (error.code === "ENOENT") return {
@@ -697,7 +809,16 @@ app.whenReady().then(() => {
 			reason: "invalid-payload"
 		};
 		const annotationFilePath = payload?.annotationFilePath || getAnnotationFilePath(sourceFilePath);
-		await fs.writeFile(annotationFilePath, JSON.stringify(data, null, 2), "utf8");
+		try {
+			const stored = serializeAnnotationDocument(data);
+			await fs.writeFile(annotationFilePath, JSON.stringify(stored, null, 2), "utf8");
+		} catch (error) {
+			return {
+				ok: false,
+				annotationFilePath,
+				reason: error.message || String(error)
+			};
+		}
 		return {
 			ok: true,
 			annotationFilePath
@@ -710,10 +831,12 @@ app.whenReady().then(() => {
 		};
 		try {
 			const text = await fs.readFile(annotationFilePath, "utf8");
+			const data = JSON.parse(text);
+			getAnnotationSchemaVersion(data);
 			return {
 				ok: true,
 				annotationFilePath,
-				data: JSON.parse(text)
+				data
 			};
 		} catch (error) {
 			return {
@@ -730,7 +853,16 @@ app.whenReady().then(() => {
 			ok: false,
 			reason: "invalid-payload"
 		};
-		await fs.writeFile(annotationFilePath, JSON.stringify(data, null, 2), "utf8");
+		try {
+			const stored = serializeAnnotationDocument(data);
+			await fs.writeFile(annotationFilePath, JSON.stringify(stored, null, 2), "utf8");
+		} catch (error) {
+			return {
+				ok: false,
+				annotationFilePath,
+				reason: error.message || String(error)
+			};
+		}
 		return {
 			ok: true,
 			annotationFilePath
@@ -757,7 +889,7 @@ app.whenReady().then(() => {
 			const sourceKind = payload?.sourceKind || "image";
 			const mode = payload?.mode || (payload?.entity ? "entity" : "items");
 			const outputFolder = payload?.outputFolder;
-			const frameImages = Array.isArray(payload?.frameImages) ? payload.frameImages : [];
+			const previewImages = Array.isArray(payload?.previewImages) ? payload.previewImages : [];
 			const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
 			if (!sourceFilePath || !outputFolder || tasks.length === 0) return {
 				ok: false,
@@ -767,7 +899,7 @@ app.whenReady().then(() => {
 			targetFolder = entity?.id ? path.join(outputFolder, `${sanitizeFileNamePart(entity.label, "entity")}_${sanitizeFileNamePart(entity.id, "id")}`) : outputFolder;
 			await fs.mkdir(targetFolder, { recursive: true });
 			const sharp = require("sharp");
-			const frameImageDataUrls = new Map(frameImages.map((item) => [item.frameId, item.dataUrl]));
+			const previewImageDataUrls = new Map(previewImages.map((item) => [item.key, item.dataUrl]));
 			const imageInputCache = /* @__PURE__ */ new Map();
 			const metadataCache = /* @__PURE__ */ new Map();
 			const exported = [];
@@ -776,17 +908,17 @@ app.whenReady().then(() => {
 					key: "source-image",
 					input: sourceFilePath
 				};
-				const frameId = task.sourceFrameId;
-				const dataUrl = frameImageDataUrls.get(frameId);
-				if (!frameId || !dataUrl) throw new Error(`missing-media-frame-image:${frameId || "unknown"}`);
-				if (!imageInputCache.has(frameId)) {
+				const imageKey = task.sourceImageKey;
+				const dataUrl = previewImageDataUrls.get(imageKey);
+				if (!imageKey || !dataUrl) throw new Error(`missing-media-image:${imageKey || "unknown"}`);
+				if (!imageInputCache.has(imageKey)) {
 					const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/.exec(dataUrl);
-					if (!match) throw new Error(`invalid-media-frame-image:${frameId}`);
-					imageInputCache.set(frameId, Buffer.from(match[1], "base64"));
+					if (!match) throw new Error(`invalid-media-image:${imageKey}`);
+					imageInputCache.set(imageKey, Buffer.from(match[1], "base64"));
 				}
 				return {
-					key: frameId,
-					input: imageInputCache.get(frameId)
+					key: imageKey,
+					input: imageInputCache.get(imageKey)
 				};
 			};
 			for (const task of tasks) {
@@ -852,6 +984,7 @@ app.whenReady().then(() => {
 					index,
 					annotationId: item.annotationId || "",
 					role: tasks[index]?.role || "",
+					comment: tasks[index]?.comment || "",
 					type: tasks[index]?.type || "",
 					ok: item.ok,
 					filePath: item.filePath || "",
@@ -912,7 +1045,7 @@ app.whenReady().then(() => {
 			const exported = [];
 			const getAnnotationImageInput = (task) => {
 				if (task.imageDataUrl) {
-					const cacheKey = `frame:${task.sourceFilePath}:${task.sourceFrameId}`;
+					const cacheKey = `frame:${task.sourceFilePath}:${task.sourceImageKey}`;
 					if (!imageInputCache.has(cacheKey)) imageInputCache.set(cacheKey, decodeImageDataUrl(task.imageDataUrl));
 					return {
 						key: cacheKey,
@@ -943,7 +1076,8 @@ app.whenReady().then(() => {
 					annotationId: task.annotationId || "",
 					annotationType: task.annotationType || "",
 					role: task.role || "",
-					sourceFrameId: task.sourceFrameId || "",
+					comment: task.comment || "",
+					sourceImageKey: task.sourceImageKey || "",
 					kind: task.kind || ""
 				};
 				if (task.kind === "error") {

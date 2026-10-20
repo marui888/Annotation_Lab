@@ -1,4 +1,4 @@
-import { createId } from '../core/id'
+import { createId } from '../core/id.js'
 
 export function createImageSource(fileInfo) {
   const now = new Date().toISOString()
@@ -20,15 +20,5 @@ export function createImageSource(fileInfo) {
     },
     createdAt: now,
     updatedAt: now,
-  }
-}
-
-export function createImageFrame(source) {
-  return {
-    id: createId('frame'),
-    sourceId: source.id,
-    kind: 'image',
-    timeStamp: null,
-    locator: {},
   }
 }

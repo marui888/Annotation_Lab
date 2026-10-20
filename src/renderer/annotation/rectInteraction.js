@@ -9,6 +9,14 @@ export const RECT_HANDLE_NAMES = [
   'left',
 ]
 
+export function getRectResizeCursor(handle) {
+  if (handle === 'top-left' || handle === 'bottom-right') return 'nwse-resize'
+  if (handle === 'top-right' || handle === 'bottom-left') return 'nesw-resize'
+  if (handle === 'top' || handle === 'bottom') return 'ns-resize'
+  if (handle === 'left' || handle === 'right') return 'ew-resize'
+  return ''
+}
+
 export function getRectHandles(rect, handleSize = 8) {
   const centerX = rect.x + rect.width / 2
   const centerY = rect.y + rect.height / 2

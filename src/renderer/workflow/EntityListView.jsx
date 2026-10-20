@@ -55,6 +55,7 @@ function EntityListNode({
         <strong>{cardIndex + 1}. {getDomainRole(subjectSchema, entityKind, node.role)?.label || node.role}</strong>
         <span>{getAnnotationTitle(annotation)}</span>
         <small>{getAnnotationSummary(annotation)}</small>
+        {node.comment ? <small className="entity-list-node-comment">Comment: {node.comment}</small> : null}
       </button>
       {node.children?.length ? (
         <ul className="entity-list-node-children">

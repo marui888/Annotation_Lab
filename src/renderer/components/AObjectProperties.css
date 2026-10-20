@@ -1,0 +1,61 @@
+.a-object-properties-editor {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #ddd4c0;
+  font-size: 12px;
+}
+
+.a-object-properties-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.a-object-properties-heading small {
+  overflow-wrap: anywhere;
+  color: #a9a08d;
+}
+
+.a-object-properties-editor label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.a-object-properties-editor select,
+.a-object-properties-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #4a4a4a;
+  background: #141414;
+  color: #eee7d8;
+  font: inherit;
+}
+
+.a-object-properties-editor select { height: 28px; }
+
+.a-object-properties-editor textarea {
+  min-height: 72px;
+  padding: 6px;
+  resize: vertical;
+}
+
+.a-object-properties-hint {
+  margin: 0;
+  color: #aaa08c;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.a-object-properties-warning { color: #ffb073; font-size: 11px; }
+
+.a-object-properties-empty {
+  padding: 12px 6px;
+  color: #aaa08c;
+  font-size: 12px;
+}

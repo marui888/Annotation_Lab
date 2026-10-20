@@ -1,10 +1,11 @@
-import { createId } from '../core/id'
+import { createId } from '../core/id.js'
 
 export function createACardNode(ref = {}) {
   return {
     id: ref.id || createId('card'),
     aObjectId: ref.aObjectId || '',
     role: ref.role || '',
+    comment: typeof ref.comment === 'string' ? ref.comment : '',
     children: normalizeACardTree(ref.children),
   }
 }
@@ -47,6 +48,7 @@ export function flattenACardTree(tree, path = []) {
         id: node.id,
         aObjectId: node.aObjectId,
         role: node.role,
+        comment: node.comment,
         path: nodePath,
       },
       ...flattenACardTree(node.children, nodePath),
@@ -60,6 +62,7 @@ export function createACardPatch(tree) {
   const aObjectRefs = flatCards.map((card) => ({
     aObjectId: card.aObjectId,
     role: card.role,
+    comment: card.comment,
   }))
 
   return {
@@ -99,5 +102,21 @@ export function updateAllACardRoles(tree, role) {
     ...node,
     role,
     children: updateAllACardRoles(node.children, role),
+  }))
+}
+
+export function updateACardProperties(tree, nodeId, patch) {
+  return normalizeACardTree(tree).map((node) => ({
+    ...node,
+    ...(node.id === nodeId ? patch : {}),
+    children: updateACardProperties(node.children, nodeId, patch),
+  }))
+}
+
+export function cloneACardTree(tree) {
+  return normalizeACardTree(tree).map((node) => ({
+    ...node,
+    id: createId('card'),
+    children: cloneACardTree(node.children),
   }))
 }

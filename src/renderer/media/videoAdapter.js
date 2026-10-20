@@ -1,4 +1,4 @@
-import { createId } from '../core/id'
+import { createId } from '../core/id.js'
 
 export function createVideoSource(fileInfo) {
   const now = new Date().toISOString()
@@ -20,25 +20,5 @@ export function createVideoSource(fileInfo) {
     },
     createdAt: now,
     updatedAt: now,
-  }
-}
-
-export function createVideoFrame(source, frameInfo = {}) {
-  const timeStamp = Number(frameInfo.timeStamp ?? frameInfo.time ?? 0)
-  return {
-    id: frameInfo.id || createId('frame'),
-    sourceId: source.id,
-    kind: 'video-frame',
-    timeStamp: Number.isFinite(timeStamp) ? timeStamp : 0,
-    locator: {
-      time: Number.isFinite(timeStamp) ? timeStamp : 0,
-    },
-    meta: {
-      width: frameInfo.width ?? source.meta?.width ?? null,
-      height: frameInfo.height ?? source.meta?.height ?? null,
-      duration: frameInfo.duration ?? source.meta?.duration ?? null,
-    },
-    createdAt: frameInfo.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
   }
 }

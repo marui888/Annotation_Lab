@@ -43,11 +43,13 @@ export default function ACardTreeNode({
         <span>{getAnnotationTitle(annotation)}</span>
       </div>
       <small>{getAnnotationSummary(annotation)}</small>
+      {node.comment ? <small title={node.comment}>Comment: {node.comment}</small> : null}
       <select
         onClick={(event) => event.stopPropagation()}
         onChange={(event) => onRoleChange(node.id, event.target.value)}
         value={node.role}
       >
+        <option value="">--</option>
         {roleMissing ? (
           <option value={node.role}>{node.role} (invalid)</option>
         ) : null}

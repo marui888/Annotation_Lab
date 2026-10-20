@@ -1,11 +1,10 @@
-import { createImageFrame, createImageSource } from '../media/imageAdapter'
+import { createImageSource } from '../media/imageAdapter.js'
 import {
-  createPdfPageFrame,
   createPdfSource,
-  getPdfFramePage,
   hydratePdfSource,
-} from '../media/pdfAdapter'
-import { createVideoSource } from '../media/videoAdapter'
+} from '../media/pdfAdapter.js'
+import { createVideoSource } from '../media/videoAdapter.js'
+import { hydrateAnnotationDocument, serializeAnnotationDocument } from '../../shared/annotationDocument.js'
 
 export function createImageEditorInput(imageResult, options = {}) {
   return {
@@ -155,13 +154,13 @@ export async function loadPdfEditorSessionFromResult(pdfResult, options = {}) {
 
   const source = createPdfSource(pdfResult)
   const annotationResult = await loadAnnotationForSource(source.filePath)
+  if (annotationResult && !annotationResult.ok) return annotationResult
   if (annotationResult?.ok && annotationResult.data) {
     return loadPdfEditorSessionFromAnnotationResult({
       ...annotationResult,
       media: pdfResult,
     }, options)
   }
-  const frame = createPdfPageFrame(source, { physicalPage: 1 })
   const annotationFilePath = annotationResult?.annotationFilePath || `${source.filePath}.annotation.json`
 
   return {
@@ -170,8 +169,6 @@ export async function loadPdfEditorSessionFromResult(pdfResult, options = {}) {
       entityId: options.entityId,
     }),
     source,
-    frame,
-    frames: [frame],
     annotationFilePath,
     annotations: [],
     simpleNotes: [],
@@ -207,9 +204,13 @@ export async function loadImageEditorSessionFromAnnotationResult(annotationResul
     return loadPdfEditorSessionFromAnnotationResult(annotationResult, options)
   }
 
-  const source = createImageSource(mediaResult)
-  const frame = createImageFrame(source)
-  const data = annotationResult.data || {}
+  const data = hydrateAnnotationDocument(annotationResult.data || {})
+  const runtimeSource = createImageSource(mediaResult)
+  const source = {
+    ...runtimeSource,
+    id: data.sources[0]?.id || runtimeSource.id,
+    meta: { ...data.sources[0]?.meta, ...runtimeSource.meta },
+  }
   const annotationFilePath = annotationResult.annotationFilePath || `${source.filePath}.annotation.json`
 
   return {
@@ -219,8 +220,6 @@ export async function loadImageEditorSessionFromAnnotationResult(annotationResul
       entityId: options.entityId,
     }),
     source,
-    frame,
-    frames: [frame],
     annotationFilePath,
     annotations: Array.isArray(data.annotations) ? data.annotations : [],
     simpleNotes: Array.isArray(data.simpleNotes) ? data.simpleNotes : [],
@@ -245,7 +244,7 @@ export async function loadPdfEditorSessionFromAnnotationResult(annotationResult,
     return { ok: false, reason: pdfResult?.reason || 'source-pdf-load-failed' }
   }
 
-  const data = annotationResult.data || {}
+  const data = hydrateAnnotationDocument(annotationResult.data || {})
   const savedSource = data.sources?.[0] || {}
   const savedFingerprint = savedSource.fingerprint || {}
   const fingerprintChanged = (
@@ -258,14 +257,6 @@ export async function loadPdfEditorSessionFromAnnotationResult(annotationResult,
     && Number(savedFingerprint.mtimeMs) !== Number(pdfResult.mtimeMs)
   )
   const source = hydratePdfSource(savedSource, pdfResult)
-  const frames = (Array.isArray(data.frames) ? data.frames : [])
-    .map((savedFrame) => createPdfPageFrame(source, {
-      ...savedFrame.meta,
-      ...savedFrame,
-      physicalPage: getPdfFramePage(savedFrame),
-    }))
-    .filter((savedFrame) => getPdfFramePage(savedFrame))
-  const firstFrame = frames[0] || createPdfPageFrame(source, { physicalPage: 1 })
   const annotationFilePath = annotationResult.annotationFilePath || `${source.filePath}.annotation.json`
 
   return {
@@ -275,8 +266,6 @@ export async function loadPdfEditorSessionFromAnnotationResult(annotationResult,
       entityId: options.entityId,
     }),
     source,
-    frame: firstFrame,
-    frames: frames.length ? frames : [firstFrame],
     annotationFilePath,
     annotations: Array.isArray(data.annotations) ? data.annotations : [],
     simpleNotes: Array.isArray(data.simpleNotes) ? data.simpleNotes : [],
@@ -300,28 +289,13 @@ export async function loadImageEditorSessionFromResult(imageResult, options = {}
   }
 
   const source = createImageSource(imageResult)
-  const frame = createImageFrame(source)
   const annotationResult = await loadAnnotationForSource(source.filePath)
   const annotationFilePath = annotationResult?.annotationFilePath || `${source.filePath}.annotation.json`
 
+  if (annotationResult && !annotationResult.ok) return annotationResult
+
   if (annotationResult?.ok && annotationResult.data) {
-    return {
-      ok: true,
-      input: createImageEditorInput(imageResult, {
-        annotationPath: annotationFilePath,
-        entityId: options.entityId,
-      }),
-      source,
-      frame,
-      frames: [frame],
-      annotationFilePath,
-      annotations: Array.isArray(annotationResult.data.annotations) ? annotationResult.data.annotations : [],
-      simpleNotes: Array.isArray(annotationResult.data.simpleNotes) ? annotationResult.data.simpleNotes : [],
-      entities: Array.isArray(annotationResult.data.entities) ? annotationResult.data.entities : [],
-      folderPath: imageResult.folderPath || '',
-      folderImages: Array.isArray(imageResult.folderImages) ? imageResult.folderImages : [],
-      saveStatus: 'Loaded',
-    }
+    return loadImageEditorSessionFromAnnotationResult({ ...annotationResult, media: imageResult }, options)
   }
 
   return {
@@ -331,8 +305,6 @@ export async function loadImageEditorSessionFromResult(imageResult, options = {}
       entityId: options.entityId,
     }),
     source,
-    frame,
-    frames: [frame],
     annotationFilePath,
     annotations: [],
     simpleNotes: [],
@@ -360,9 +332,16 @@ export async function loadVideoEditorSessionFromAnnotationResult(annotationResul
     }
   }
 
-  const source = createVideoSource(videoResult)
-  const data = annotationResult.data || {}
-  const frames = Array.isArray(data.frames) ? data.frames : []
+  const data = hydrateAnnotationDocument(annotationResult.data || {})
+  const runtimeSource = createVideoSource(videoResult)
+  const source = {
+    ...runtimeSource,
+    id: data.sources[0]?.id || runtimeSource.id,
+    meta: {
+      ...runtimeSource.meta,
+      ...data.sources[0]?.meta,
+    },
+  }
   const annotationFilePath = annotationResult.annotationFilePath || `${source.filePath}.annotation.json`
 
   return {
@@ -372,8 +351,6 @@ export async function loadVideoEditorSessionFromAnnotationResult(annotationResul
       entityId: options.entityId,
     }),
     source,
-    frame: frames[0] || null,
-    frames,
     annotationFilePath,
     annotations: Array.isArray(data.annotations) ? data.annotations : [],
     simpleNotes: Array.isArray(data.simpleNotes) ? data.simpleNotes : [],
@@ -397,25 +374,10 @@ export async function loadVideoEditorSessionFromResult(videoResult, options = {}
   const annotationResult = await loadAnnotationForSource(source.filePath)
   const annotationFilePath = annotationResult?.annotationFilePath || `${source.filePath}.annotation.json`
 
+  if (annotationResult && !annotationResult.ok) return annotationResult
+
   if (annotationResult?.ok && annotationResult.data) {
-    const frames = Array.isArray(annotationResult.data.frames) ? annotationResult.data.frames : []
-    return {
-      ok: true,
-      input: createVideoEditorInput(videoResult, {
-        annotationPath: annotationFilePath,
-        entityId: options.entityId,
-      }),
-      source,
-      frame: frames[0] || null,
-      frames,
-      annotationFilePath,
-      annotations: Array.isArray(annotationResult.data.annotations) ? annotationResult.data.annotations : [],
-      simpleNotes: Array.isArray(annotationResult.data.simpleNotes) ? annotationResult.data.simpleNotes : [],
-      entities: Array.isArray(annotationResult.data.entities) ? annotationResult.data.entities : [],
-      folderPath: '',
-      folderImages: [],
-      saveStatus: 'Loaded',
-    }
+    return loadVideoEditorSessionFromAnnotationResult({ ...annotationResult, media: videoResult }, options)
   }
 
   return {
@@ -425,8 +387,6 @@ export async function loadVideoEditorSessionFromResult(videoResult, options = {}
       entityId: options.entityId,
     }),
     source,
-    frame: null,
-    frames: [],
     annotationFilePath,
     annotations: [],
     simpleNotes: [],
@@ -438,9 +398,15 @@ export async function loadVideoEditorSessionFromResult(videoResult, options = {}
 }
 
 export async function saveAnnotationDocument(sourceFilePath, data, annotationFilePath = '') {
+  let stored
+  try {
+    stored = serializeAnnotationDocument(data)
+  } catch (error) {
+    return { ok: false, reason: error.message || String(error) }
+  }
   return window.labApi?.saveAnnotations?.({
     sourceFilePath,
     annotationFilePath,
-    data,
+    data: stored,
   })
 }

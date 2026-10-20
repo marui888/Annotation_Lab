@@ -6,6 +6,7 @@ import path from 'node:path'
 import { setImmediate } from 'node:timers'
 import { pathToFileURL } from 'node:url'
 import { fileURLToPath } from 'node:url'
+import { getAnnotationSchemaVersion, hydrateAnnotationDocument, serializeAnnotationDocument } from '../shared/annotationDocument.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -324,7 +325,7 @@ async function getPdfPayload(filePath) {
 
 async function loadAnnotationFile(annotationFilePath) {
   const text = await fs.readFile(annotationFilePath, 'utf8')
-  const data = JSON.parse(text)
+  const data = hydrateAnnotationDocument(JSON.parse(text))
   const rawSourceFilePath = data.sources?.[0]?.filePath || getSourceFilePathFromAnnotation(annotationFilePath)
   if (!rawSourceFilePath) {
     return {
@@ -376,6 +377,7 @@ async function collectAnnotationFiles(folderPath) {
 async function readBEntityIndexItem(dataFilePath) {
   const text = await fs.readFile(dataFilePath, 'utf8')
   const data = JSON.parse(text)
+  getAnnotationSchemaVersion(data)
   const sourceFilePath = data.sources?.[0]?.filePath || getSourceFilePathFromAnnotation(dataFilePath)
   const declaredSourceKind = String(data.sources?.[0]?.kind || '').toLowerCase()
   const sourceExtension = path.extname(sourceFilePath).toLowerCase()
@@ -775,7 +777,7 @@ app.whenReady().then(() => {
       return {
         ok: true,
         annotationFilePath,
-        data: JSON.parse(text),
+        data: hydrateAnnotationDocument(JSON.parse(text)),
       }
     } catch (error) {
       if (error.code === 'ENOENT') {
@@ -801,7 +803,12 @@ app.whenReady().then(() => {
     if (!sourceFilePath || !data) return { ok: false, reason: 'invalid-payload' }
 
     const annotationFilePath = payload?.annotationFilePath || getAnnotationFilePath(sourceFilePath)
-    await fs.writeFile(annotationFilePath, JSON.stringify(data, null, 2), 'utf8')
+    try {
+      const stored = serializeAnnotationDocument(data)
+      await fs.writeFile(annotationFilePath, JSON.stringify(stored, null, 2), 'utf8')
+    } catch (error) {
+      return { ok: false, annotationFilePath, reason: error.message || String(error) }
+    }
 
     return {
       ok: true,
@@ -813,10 +820,12 @@ app.whenReady().then(() => {
     if (!annotationFilePath) return { ok: false, reason: 'annotation-file-path-empty' }
     try {
       const text = await fs.readFile(annotationFilePath, 'utf8')
+      const data = JSON.parse(text)
+      getAnnotationSchemaVersion(data)
       return {
         ok: true,
         annotationFilePath,
-        data: JSON.parse(text),
+        data,
       }
     } catch (error) {
       return {
@@ -831,7 +840,12 @@ app.whenReady().then(() => {
     const annotationFilePath = payload?.annotationFilePath
     const data = payload?.data
     if (!annotationFilePath || !data) return { ok: false, reason: 'invalid-payload' }
-    await fs.writeFile(annotationFilePath, JSON.stringify(data, null, 2), 'utf8')
+    try {
+      const stored = serializeAnnotationDocument(data)
+      await fs.writeFile(annotationFilePath, JSON.stringify(stored, null, 2), 'utf8')
+    } catch (error) {
+      return { ok: false, annotationFilePath, reason: error.message || String(error) }
+    }
     return {
       ok: true,
       annotationFilePath,
@@ -862,7 +876,7 @@ app.whenReady().then(() => {
       const sourceKind = payload?.sourceKind || 'image'
       const mode = payload?.mode || (payload?.entity ? 'entity' : 'items')
       const outputFolder = payload?.outputFolder
-      const frameImages = Array.isArray(payload?.frameImages) ? payload.frameImages : []
+      const previewImages = Array.isArray(payload?.previewImages) ? payload.previewImages : []
       const tasks = Array.isArray(payload?.tasks) ? payload.tasks : []
       if (!sourceFilePath || !outputFolder || tasks.length === 0) {
         return { ok: false, reason: 'invalid-payload' }
@@ -878,7 +892,7 @@ app.whenReady().then(() => {
       await fs.mkdir(targetFolder, { recursive: true })
 
       const sharp = require('sharp')
-      const frameImageDataUrls = new Map(frameImages.map((item) => [item.frameId, item.dataUrl]))
+      const previewImageDataUrls = new Map(previewImages.map((item) => [item.key, item.dataUrl]))
       const imageInputCache = new Map()
       const metadataCache = new Map()
       const exported = []
@@ -887,15 +901,15 @@ app.whenReady().then(() => {
         if (sourceKind !== 'video' && sourceKind !== 'pdf') {
           return { key: 'source-image', input: sourceFilePath }
         }
-        const frameId = task.sourceFrameId
-        const dataUrl = frameImageDataUrls.get(frameId)
-        if (!frameId || !dataUrl) throw new Error(`missing-media-frame-image:${frameId || 'unknown'}`)
-        if (!imageInputCache.has(frameId)) {
+        const imageKey = task.sourceImageKey
+        const dataUrl = previewImageDataUrls.get(imageKey)
+        if (!imageKey || !dataUrl) throw new Error(`missing-media-image:${imageKey || 'unknown'}`)
+        if (!imageInputCache.has(imageKey)) {
           const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/.exec(dataUrl)
-          if (!match) throw new Error(`invalid-media-frame-image:${frameId}`)
-          imageInputCache.set(frameId, Buffer.from(match[1], 'base64'))
+          if (!match) throw new Error(`invalid-media-image:${imageKey}`)
+          imageInputCache.set(imageKey, Buffer.from(match[1], 'base64'))
         }
-        return { key: frameId, input: imageInputCache.get(frameId) }
+        return { key: imageKey, input: imageInputCache.get(imageKey) }
       }
 
       for (const task of tasks) {
@@ -969,6 +983,7 @@ app.whenReady().then(() => {
           index,
           annotationId: item.annotationId || '',
           role: tasks[index]?.role || '',
+          comment: tasks[index]?.comment || '',
           type: tasks[index]?.type || '',
           ok: item.ok,
           filePath: item.filePath || '',
@@ -1039,7 +1054,7 @@ app.whenReady().then(() => {
 
       const getAnnotationImageInput = (task) => {
         if (task.imageDataUrl) {
-          const cacheKey = `frame:${task.sourceFilePath}:${task.sourceFrameId}`
+          const cacheKey = `frame:${task.sourceFilePath}:${task.sourceImageKey}`
           if (!imageInputCache.has(cacheKey)) {
             imageInputCache.set(cacheKey, decodeImageDataUrl(task.imageDataUrl))
           }
@@ -1067,7 +1082,8 @@ app.whenReady().then(() => {
           annotationId: task.annotationId || '',
           annotationType: task.annotationType || '',
           role: task.role || '',
-          sourceFrameId: task.sourceFrameId || '',
+          comment: task.comment || '',
+          sourceImageKey: task.sourceImageKey || '',
           kind: task.kind || '',
         }
 

@@ -455,6 +455,64 @@ button.active-tool {
   overflow: hidden;
 }
 
+.ab-inspector-content.a-objects-active {
+  overflow: hidden;
+}
+
+.a-objects-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 7px;
+  overflow: hidden;
+}
+
+.a-object-split {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.a-object-split > .object-list,
+.a-object-split > .a-object-properties {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.a-object-split > .a-object-properties {
+  padding-top: 8px;
+}
+
+.a-object-divider {
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+  position: relative;
+}
+
+.a-object-divider::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 2px;
+  background: #5a4a22;
+}
+
+.a-object-divider:hover::after,
+.a-object-divider:focus-visible::after {
+  background: #c7a34e;
+}
+
+.a-object-divider:focus-visible {
+  outline: 1px solid #c7a34e;
+  outline-offset: -1px;
+}
+
 .ab-inspector-content::-webkit-scrollbar {
   width: 7px;
   height: 7px;

@@ -11,10 +11,9 @@ import {
 import {
   appendRefsToACardTree,
   createACardPatch,
-  createACardNode,
   flattenACardTree,
   getEntityACardTree,
-  updateAllACardRoles,
+  updateACardProperties,
 } from '../domain/aCardTree'
 import PreviewControlOverlay from '../components/preview/PreviewControlOverlay'
 import usePreviewWheelZoom from '../components/preview/usePreviewWheelZoom'
@@ -28,6 +27,8 @@ import {
   getDomainSchema,
   validateDomainEntity,
 } from '../domain/domainSchemas'
+import AObjectProperties from '../components/AObjectProperties'
+import { createCardsFromAnnotations, getInitialCardProperties } from '../domain/aObjectDefaults.js'
 import ACardTreeNode from './ACardTreeNode'
 import EntityRawPreview from './EntityRawPreview'
 import './BWorkflow.css'
@@ -35,21 +36,6 @@ import './BWorkflow.css'
 const A_OBJECT_DRAG_TYPE = 'application/x-annotation-lab-a-object'
 const MIN_B_WORKFLOW_TOP_HEIGHT = 80
 const MIN_B_WORKFLOW_BOTTOM_HEIGHT = 92
-
-function createEntityCards(annotations, kind) {
-  return annotations.map((annotation) => createACardNode({
-    aObjectId: annotation.id,
-    role: kind,
-  }))
-}
-
-function updateTreeNodeRole(tree, nodeId, role) {
-  return tree.map((node) => ({
-    ...node,
-    role: node.id === nodeId ? role : node.role,
-    children: updateTreeNodeRole(node.children || [], nodeId, role),
-  }))
-}
 
 function normalizeFeatureInputValue(value, multi) {
   if (multi) return Array.isArray(value) ? value : value ? [value] : []
@@ -102,6 +88,15 @@ export default function BWorkflow({
   const [showPreviewAnnotationFrame, setShowPreviewAnnotationFrame] = useState(true)
   const [isResizingBottom, setIsResizingBottom] = useState(false)
   const [entityMetaTab, setEntityMetaTab] = useState('structure')
+  const [propertyTarget, setPropertyTarget] = useState({ entityId: null, tab: 'entity' })
+  const [propertyEntityId, setPropertyEntityId] = useState(selectedEntity?.id || null)
+  // A different Entity starts with its own empty card selection and Entity properties.
+  // Keep Preview scale and List/Preview choice when switching Entities.
+  if (propertyEntityId !== (selectedEntity?.id || null)) {
+    setPropertyEntityId(selectedEntity?.id || null)
+    setSelectedCardIds([])
+    setPropertyTarget({ entityId: selectedEntity?.id || null, tab: 'entity' })
+  }
   const previewScrollRef = usePreviewWheelZoom({
     enabled: viewTab === 'preview',
     scale: previewScaleFactor,
@@ -114,6 +109,12 @@ export default function BWorkflow({
   const subjectSchema = getDomainSchema(selectedEntity?.subject || subjectSchemas[0]?.id, subjectSchemas)
   const validation = selectedEntity ? validateDomainEntity(selectedEntity, subjectSchemas) : null
   const roleOptions = selectedEntity ? getDomainRolesForKind(subjectSchema, selectedEntity.kind) : []
+  const propertyTab = propertyTarget.entityId === selectedEntity?.id ? propertyTarget.tab : 'entity'
+  const showPropertyTab = (tab) => setPropertyTarget({ entityId: selectedEntity?.id, tab })
+  const selectedCard = activeSelectedCardIds.length === 1
+    ? flatCards.find((item) => item.id === activeSelectedCardIds[0]) : null
+  const selectedCardAnnotation = selectedCard
+    ? annotations.find((item) => item.id === selectedCard.aObjectId) : null
   const selectedKind = selectedEntity ? getDomainKind(subjectSchema, selectedEntity.kind) : null
   const basicFeatureGroups = getDomainFeatureGroups(subjectSchema, 'basic')
   const keywordFeatureGroups = getDomainFeatureGroups(subjectSchema, 'keyword')
@@ -170,8 +171,7 @@ export default function BWorkflow({
   const createEntityFromSelection = () => {
     if (selectedAnnotations.length === 0) return
     const schema = getDomainSchema(subjectSchemas[0]?.id, subjectSchemas)
-    const role = getDomainRolesForKind(schema, schema.defaultKind)[0]?.value || 'default'
-    const aCards = createEntityCards(selectedAnnotations, role)
+    const aCards = createCardsFromAnnotations(selectedAnnotations, { subject: schema.id, kind: schema.defaultKind }, subjectSchemas)
     onCreateEntity({
       subject: schema.id,
       kind: schema.defaultKind,
@@ -190,8 +190,7 @@ export default function BWorkflow({
       const selectedAnnotationsToAdd = validIds
         .map((id) => annotations.find((annotation) => annotation.id === id))
         .filter(Boolean)
-      const role = getDomainRolesForKind(schema, schema.defaultKind)[0]?.value || 'default'
-      const aCards = createEntityCards(selectedAnnotationsToAdd, role)
+      const aCards = createCardsFromAnnotations(selectedAnnotationsToAdd, { subject: schema.id, kind: schema.defaultKind }, subjectSchemas)
       onCreateEntity({
         subject: schema.id,
         kind: schema.defaultKind,
@@ -203,12 +202,11 @@ export default function BWorkflow({
     }
 
     const existingIds = new Set(flatCards.map((card) => card.aObjectId))
-    const refsToAdd = validIds
-      .filter((id) => !existingIds.has(id))
-      .map((id) => ({
-        aObjectId: id,
-        role: roleOptions[0]?.value || 'default',
-      }))
+    const refsToAdd = createCardsFromAnnotations(
+      validIds.filter((id) => !existingIds.has(id))
+        .map((id) => annotations.find((annotation) => annotation.id === id)),
+      selectedEntity, subjectSchemas,
+    )
 
     if (refsToAdd.length === 0) return
     updateEntityTree(appendRefsToACardTree(entityTree, refsToAdd))
@@ -222,23 +220,18 @@ export default function BWorkflow({
   const updateEntitySubject = (subject) => {
     if (!selectedEntity) return
     const schema = getDomainSchema(subject, subjectSchemas)
-    const role = getDomainRolesForKind(schema, schema.defaultKind)[0]?.value || 'default'
-    const nextTree = updateAllACardRoles(entityTree, role)
     onUpdateEntity(selectedEntity.id, {
       subject: schema.id,
       kind: schema.defaultKind,
       subKind: getDomainDefaultSubKind(schema, schema.defaultKind),
-      ...createACardPatch(nextTree),
     })
   }
 
   const updateEntityKind = (kind) => {
     if (!selectedEntity) return
-    const role = getDomainRolesForKind(subjectSchema, kind)[0]?.value || 'default'
     onUpdateEntity(selectedEntity.id, {
       kind,
       subKind: getDomainDefaultSubKind(subjectSchema, kind),
-      ...createACardPatch(updateAllACardRoles(entityTree, role)),
     })
   }
 
@@ -263,7 +256,20 @@ export default function BWorkflow({
   }
 
   const updateNodeRole = (nodeId, role) => {
-    updateEntityTree(updateTreeNodeRole(entityTree, nodeId, role))
+    updateEntityTree(updateACardProperties(entityTree, nodeId, { role }))
+    setSelectedCardIds([nodeId])
+    showPropertyTab('a-object')
+  }
+
+  const updateSelectedCardProperties = (patch) => {
+    if (!selectedCard) return
+    updateEntityTree(updateACardProperties(entityTree, selectedCard.id, patch))
+  }
+
+  const resetSelectedCardProperties = () => {
+    if (!selectedCardAnnotation || !selectedEntity) return
+    if (!window.confirm('重新复制原 A 对象的默认 Role 和 Comment？这会覆盖当前引用的属性。')) return
+    updateSelectedCardProperties(getInitialCardProperties(selectedCardAnnotation, selectedEntity, subjectSchemas))
   }
 
   const removeAllRefs = () => {
@@ -295,6 +301,7 @@ export default function BWorkflow({
     const x = Math.min(event.clientX + 2, window.innerWidth - menuWidth - 8)
     const y = Math.min(event.clientY + 2, window.innerHeight - menuHeight - 8)
     setSelectedCardIds([node.id])
+    showPropertyTab('a-object')
     onSelectAnnotations([node.aObjectId])
     setCardMenu({
       nodeId: node.id,
@@ -335,6 +342,7 @@ export default function BWorkflow({
 
   const handleCardSelect = (nextSelectedCardIds) => {
     setSelectedCardIds(nextSelectedCardIds)
+    showPropertyTab(nextSelectedCardIds.length ? 'a-object' : 'entity')
     const firstCard = flatCards.find((card) => card.id === nextSelectedCardIds[0])
     if (firstCard) onSelectAnnotations([firstCard.aObjectId])
     if (!firstCard) onSelectAnnotations([])
@@ -640,8 +648,12 @@ export default function BWorkflow({
       />
 
       <aside className="b-workflow-preview">
+        <div className="b-property-target-tabs">
+          <button className={propertyTab === 'entity' ? 'active' : ''} onClick={() => showPropertyTab('entity')} type="button">Entity 属性</button>
+          <button className={propertyTab === 'a-object' ? 'active' : ''} onClick={() => showPropertyTab('a-object')} type="button">A Object 属性</button>
+        </div>
         {selectedEntity ? (
-          <div className="b-workflow-meta">
+          <div className="b-workflow-meta" hidden={propertyTab !== 'entity'}>
             <div className="b-meta-tabs">
               <button className={entityMetaTab === 'structure' ? 'active' : ''} onClick={() => setEntityMetaTab('structure')} type="button">
                 成分属性
@@ -696,8 +708,19 @@ export default function BWorkflow({
             )}
           </div>
         ) : (
-          <div className="b-workflow-empty-meta">No Entity selected.</div>
+          <div className="b-workflow-empty-meta" hidden={propertyTab !== 'entity'}>No Entity selected.</div>
         )}
+        <div className="b-workflow-a-object-meta" hidden={propertyTab !== 'a-object'}>
+          <AObjectProperties
+            annotation={selectedCardAnnotation}
+            card={selectedCard}
+            entity={selectedEntity}
+            onChange={updateSelectedCardProperties}
+            onResetDefaults={resetSelectedCardProperties}
+            selectedCount={activeSelectedCardIds.length}
+            subjectSchemas={subjectSchemas}
+          />
+        </div>
       </aside>
     </div>
   )

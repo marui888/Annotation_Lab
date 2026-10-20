@@ -366,6 +366,29 @@
   display: block;
 }
 
+.b-workflow-meta[hidden],
+.b-workflow-a-object-meta[hidden] {
+  display: none;
+}
+
+.b-property-target-tabs {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.b-property-target-tabs button {
+  min-width: 0;
+  height: 25px;
+  font-size: 11px;
+}
+
+.b-property-target-tabs button.active {
+  border-color: #ffd45a;
+  background: #302a18;
+  color: #ffd45a;
+}
+
 .b-workflow-empty-meta {
   padding: 8px;
   color: #8f887a;

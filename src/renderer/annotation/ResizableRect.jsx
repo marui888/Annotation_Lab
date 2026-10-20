@@ -1,5 +1,5 @@
 import { Group, Rect } from 'react-konva'
-import { getRectBorderHotZones, getRectHandles } from './rectInteraction'
+import { getRectBorderHotZones, getRectHandles, getRectResizeCursor } from './rectInteraction'
 
 export default function ResizableRect({
   annotation,
@@ -38,6 +38,7 @@ export default function ResizableRect({
         <>
           {bodyVisible ? getRectBorderHotZones(rect, hotZoneSize).map((zone) => (
             <Rect
+              interactionCursor="move"
               fill="rgba(0, 0, 0, 0)"
               height={zone.height}
               key={`hot-${zone.name}`}
@@ -54,6 +55,7 @@ export default function ResizableRect({
 
           {getRectHandles(rect, handleSize).map((handle) => (
             <Rect
+              interactionCursor={getRectResizeCursor(handle.name)}
               fill="#000"
               height={handle.height}
               key={handle.name}

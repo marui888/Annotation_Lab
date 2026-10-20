@@ -1,4 +1,4 @@
-import { flattenACardTree, getEntityACardTree } from './aCardTree'
+import { flattenACardTree, getEntityACardTree } from './aCardTree.js'
 
 export const FALLBACK_DOMAIN_SCHEMAS = [
   {
@@ -176,6 +176,7 @@ export function getEntityAObjectRefs(entity) {
     return flattenACardTree(getEntityACardTree(entity)).map((card) => ({
       aObjectId: card.aObjectId,
       role: card.role || 'default',
+      comment: card.comment || '',
     }))
   }
 
@@ -185,6 +186,7 @@ export function getEntityAObjectRefs(entity) {
       .map((ref) => ({
         aObjectId: ref.aObjectId,
         role: ref.role || 'default',
+        comment: ref.comment || '',
       }))
   }
 

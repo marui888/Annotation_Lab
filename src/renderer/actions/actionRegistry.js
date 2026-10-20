@@ -2,9 +2,8 @@ const actions = new Map()
 const listeners = new Set()
 
 export const ACTION_CATALOG = [
-  { id: 'ab.aObject.goTo', label: 'A Object Go To', scope: 'global', description: 'Go to current A Object target frame.' },
-  { id: 'ab.frame.goTo', label: 'Frame Go To', scope: 'global', description: 'Go to current frame.' },
-  { id: 'ab.entity.goTo', label: 'Entity Go To', scope: 'global', description: 'Go to current Entity default frame.' },
+  { id: 'ab.aObject.goTo', label: 'A Object Go To', scope: 'global', description: 'Go to the source location of the selected A Object.' },
+  { id: 'ab.entity.goTo', label: 'Entity Go To', scope: 'global', description: 'Go to the first A Object source location in the Entity.' },
   { id: 'global.undoDelete', label: 'Undo Delete', scope: 'global', description: 'Undo the latest supported delete in the active editor session.' },
   { id: 'global.openSettings', label: 'Open Settings', scope: 'global', description: 'Open application settings.' },
   { id: 'global.openSchemaEditor', label: 'Open Schema Editor', scope: 'global', description: 'Open Subject Schema Editor.' },

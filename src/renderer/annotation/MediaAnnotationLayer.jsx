@@ -23,6 +23,8 @@ import {
   isPointNearArrow,
 } from './arrowInteraction'
 import ResizableRect from './ResizableRect'
+import { getRectResizeCursor } from './rectInteraction.js'
+import { createRectCursorFeedback } from './rectCursorFeedback.js'
 import {
   constrainPointToOrthogonal,
   getPointDistance,
@@ -106,7 +108,9 @@ function isOrthogonalSegment(start, end) {
 
 export default function MediaAnnotationLayer({
   annotations,
-  frameId,
+  sourceId,
+  locator = {},
+  interactionKey = sourceId,
   keyboardShortcutsEnabled = true,
   mode,
   onAddAnnotation,
@@ -135,17 +139,42 @@ export default function MediaAnnotationLayer({
   const [pendingPolygonEdgeDelete, setPendingPolygonEdgeDelete] = useState(null)
   const [polygonRepair, setPolygonRepair] = useState(null)
   const stageRef = useRef(null)
+  const rectCursorFeedbackRef = useRef(null)
   const suppressPolygonClickRef = useRef(false)
 
-  const canUseStage = frameId && size?.width > 0 && size?.height > 0
+  const canUseStage = sourceId && size?.width > 0 && size?.height > 0
   const hasBlockingInteraction = draftPolygonPoints.length > 0 || Boolean(polygonRepair)
 
   useEffect(() => {
-    onInteractionLockChange?.(frameId, hasBlockingInteraction)
-    return () => {
-      if (hasBlockingInteraction) onInteractionLockChange?.(frameId, false)
+    const stage = stageRef.current
+    if (!stage) return undefined
+    const feedback = createRectCursorFeedback(stage, document)
+    rectCursorFeedbackRef.current = feedback
+    const releaseCursor = () => feedback.finish()
+    const leaveWindow = () => {
+      feedback.leave()
+      feedback.finish()
     }
-  }, [frameId, hasBlockingInteraction, onInteractionLockChange])
+    window.addEventListener('mouseup', releaseCursor)
+    window.addEventListener('blur', leaveWindow)
+    return () => {
+      window.removeEventListener('mouseup', releaseCursor)
+      window.removeEventListener('blur', leaveWindow)
+      feedback.destroy()
+      rectCursorFeedbackRef.current = null
+    }
+  }, [canUseStage])
+
+  useEffect(() => {
+    rectCursorFeedbackRef.current?.refresh(Boolean(polygonRepair))
+  }, [annotations, canUseStage, mode, polygonRepair, selectedAnnotationIds])
+
+  useEffect(() => {
+    onInteractionLockChange?.(interactionKey, hasBlockingInteraction)
+    return () => {
+      if (hasBlockingInteraction) onInteractionLockChange?.(interactionKey, false)
+    }
+  }, [interactionKey, hasBlockingInteraction, onInteractionLockChange])
 
   const getPointerPosition = (event) => {
     const stage = event.target.getStage()
@@ -171,7 +200,8 @@ export default function MediaAnnotationLayer({
     const now = new Date().toISOString()
     const annotation = {
       id: createId('a'),
-      frameId,
+      sourceId,
+      locator: { ...locator },
       type: 'text',
       geometry,
       text: 'FreeText',
@@ -388,7 +418,8 @@ export default function MediaAnnotationLayer({
     const now = new Date().toISOString()
     onAddAnnotation?.({
       id: createId('a'),
-      frameId,
+      sourceId,
+      locator: { ...locator },
       type: 'polygon',
       geometry,
       text: '',
@@ -405,7 +436,7 @@ export default function MediaAnnotationLayer({
     setPolygonHoverPoint(null)
     setPolygonHoverOrthogonal(false)
     return true
-  }, [draftPolygonPoints, frameId, onAddAnnotation, size])
+  }, [draftPolygonPoints, sourceId, locator, onAddAnnotation, size])
 
   const addPolygonPoint = (position, constrainOrthogonal = false) => {
     const firstPoint = draftPolygonPoints[0]
@@ -591,6 +622,7 @@ export default function MediaAnnotationLayer({
   }
 
   const handleMouseMove = (event) => {
+    rectCursorFeedbackRef.current?.move(event)
     const position = getPointerPosition(event)
     if (!position) return
 
@@ -710,6 +742,7 @@ export default function MediaAnnotationLayer({
   }
 
   const handleMouseUp = () => {
+    rectCursorFeedbackRef.current?.finish()
     if (dragState) {
       if (dragState.type === 'polygon' && !dragState.moved) {
         if (dragState.kind === 'edge') {
@@ -751,7 +784,8 @@ export default function MediaAnnotationLayer({
 
       onAddAnnotation({
         id: createId('a'),
-        frameId,
+        sourceId,
+        locator: { ...locator },
         type: 'rect',
         geometry,
         text: '',
@@ -780,7 +814,8 @@ export default function MediaAnnotationLayer({
 
       onAddAnnotation({
         id: createId('a'),
-        frameId,
+        sourceId,
+        locator: { ...locator },
         type: 'arrow',
         geometry,
         text: '',
@@ -804,6 +839,8 @@ export default function MediaAnnotationLayer({
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
 
+    rectCursorFeedbackRef.current?.start('move')
+
     setDragState({
       type: annotation.type,
       kind: 'move',
@@ -818,6 +855,8 @@ export default function MediaAnnotationLayer({
     const annotation = annotations.find((item) => item.id === annotationId)
     const pointer = event.target.getStage()?.getPointerPosition?.()
     if (!annotation || !pointer) return
+
+    rectCursorFeedbackRef.current?.start(getRectResizeCursor(handle))
 
     setDragState({
       type: annotation.type,
@@ -958,6 +997,7 @@ export default function MediaAnnotationLayer({
       onContextMenu={handleContextMenu}
       onDblClick={handleDoubleClick}
       onMouseLeave={() => {
+        rectCursorFeedbackRef.current?.leave()
         setPolygonHoverPoint(null)
         setPolygonHoverOrthogonal(false)
         setHoveredPolygonEdge(null)

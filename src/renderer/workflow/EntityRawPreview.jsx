@@ -72,9 +72,9 @@ export default function EntityRawPreview({
               index={flatCards.findIndex((card) => card.id === node.id)}
               layoutScale={sharedScale}
               missingPreviewText={previewEntry?.previewStatus === 'loading'
-                ? 'Building frame preview...'
+                ? 'Building source preview...'
                 : previewEntry?.previewReason
-                  ? `Frame preview failed: ${previewEntry.previewReason}`
+                  ? `Source preview failed: ${previewEntry.previewReason}`
                   : undefined}
               previewBackgroundColor={previewBackgroundColor}
               showAnnotationFrame={showAnnotationFrame}

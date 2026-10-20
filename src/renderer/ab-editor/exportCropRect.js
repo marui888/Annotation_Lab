@@ -41,6 +41,7 @@ export function createAnnotationExportTask(annotation, imageSize, options = {}) 
     annotationId: annotation.id,
     index: Number.isFinite(options.index) ? options.index : 0,
     role: options.role || '',
+    comment: options.comment !== undefined ? options.comment : annotation.comment || '',
     type: annotation.type,
   }
 

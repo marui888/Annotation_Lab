@@ -1,4 +1,4 @@
-import { createId } from '../core/id'
+import { createId } from '../core/id.js'
 
 export function createPdfSource(fileInfo) {
   const now = new Date().toISOString()
@@ -40,29 +40,5 @@ export function hydratePdfSource(savedSource = {}, fileInfo = {}) {
       pageCount: fileInfo.pageCount ?? savedSource.meta?.pageCount ?? null,
     },
     updatedAt: new Date().toISOString(),
-  }
-}
-
-export function getPdfFramePage(frame) {
-  const page = Number(frame?.locator?.physicalPage ?? frame?.locator?.page)
-  return Number.isFinite(page) && page > 0 ? Math.round(page) : null
-}
-
-export function createPdfPageFrame(source, pageInfo = {}) {
-  const page = Math.max(1, Math.round(Number(pageInfo.physicalPage ?? pageInfo.page) || 1))
-  const now = new Date().toISOString()
-  return {
-    id: pageInfo.id || `${source.id}:page:${page}`,
-    sourceId: source.id,
-    kind: 'pdf-page',
-    locator: { physicalPage: page },
-    meta: {
-      width: pageInfo.width ?? null,
-      height: pageInfo.height ?? null,
-      rotation: pageInfo.rotation ?? null,
-      bookPageLabel: pageInfo.bookPageLabel ?? null,
-    },
-    createdAt: pageInfo.createdAt || now,
-    updatedAt: now,
   }
 }
